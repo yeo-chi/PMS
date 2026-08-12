@@ -3,8 +3,6 @@ package yeo.chi.proejct.pms.reservation.service
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import yeo.chi.proejct.pms.operation.configuration.PlatformSyncFacade
-import yeo.chi.proejct.pms.operation.configuration.ReservationSyncRequest
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.persistent.ReservationRepository
 import yeo.chi.proejct.pms.reservation.persistent.toDomain
@@ -13,7 +11,7 @@ import yeo.chi.proejct.pms.reservation.persistent.toEntity
 @Service
 class ReservationService(
     private val reservationRepository: ReservationRepository,
-    private val platformSyncFacade: PlatformSyncFacade,
+    private val platformSyncClient: PlatformSyncClient,
 ) {
 
     companion object {
@@ -37,12 +35,12 @@ class ReservationService(
 
         val saved = reservationRepository.save(reservation.toEntity()).toDomain()
 
-        platformSyncFacade.syncReservationCreated(saved.toSyncRequest())
+        platformSyncClient.syncReservationCreated(saved.toSyncRequest())
 
         return saved
     }
 
-    private fun Reservation.toSyncRequest(): ReservationSyncRequest = ReservationSyncRequest(
+    private fun Reservation.toSyncRequest(): PlatformSyncRequest = PlatformSyncRequest(
         platformCode = platformCode,
         roomId = roomId,
         reservationCode = code,

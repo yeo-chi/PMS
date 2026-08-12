@@ -8,8 +8,6 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
-import yeo.chi.proejct.pms.operation.configuration.PlatformSyncFacade
-import yeo.chi.proejct.pms.operation.configuration.ReservationSyncRequest
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
 import yeo.chi.proejct.pms.reservation.persistent.ReservationRepository
@@ -33,10 +31,10 @@ class ReservationServiceTest : FeatureSpec({
     )
 
     feature("ReservationService.createReservation") {
-        scenario("새로운 예약이면 저장 후 PlatformSyncFacade를 호출한다") {
+        scenario("새로운 예약이면 저장 후 PlatformSyncClient를 호출한다") {
             val reservationRepository = mockk<ReservationRepository>()
-            val platformSyncFacade = mockk<PlatformSyncFacade>()
-            val reservationService = ReservationService(reservationRepository, platformSyncFacade)
+            val platformSyncClient = mockk<PlatformSyncClient>()
+            val reservationService = ReservationService(reservationRepository, platformSyncClient)
 
             val reservation = newReservation()
             val savedEntity = reservation.toEntity().apply { id = 100L }
@@ -45,15 +43,15 @@ class ReservationServiceTest : FeatureSpec({
                 reservationRepository.findByPlatformCodeAndCode("AIRBNB", "AIRBNB-CODE-0001")
             } returns null
             every { reservationRepository.save(any()) } returns savedEntity
-            every { platformSyncFacade.syncReservationCreated(any()) } just Runs
+            every { platformSyncClient.syncReservationCreated(any()) } just Runs
 
             val result = reservationService.createReservation(reservation)
 
             result.id shouldBe 100L
             result.status shouldBe ReservationStatus.CONFIRMED
 
-            val requestSlot = slot<ReservationSyncRequest>()
-            verify(exactly = 1) { platformSyncFacade.syncReservationCreated(capture(requestSlot)) }
+            val requestSlot = slot<PlatformSyncRequest>()
+            verify(exactly = 1) { platformSyncClient.syncReservationCreated(capture(requestSlot)) }
             requestSlot.captured.platformCode shouldBe "AIRBNB"
             requestSlot.captured.reservationCode shouldBe "AIRBNB-CODE-0001"
             requestSlot.captured.roomId shouldBe 1L
@@ -63,8 +61,8 @@ class ReservationServiceTest : FeatureSpec({
 
         scenario("이미 존재하는 예약(platformCode+code)이면 저장/동기화 없이 기존 예약을 그대로 반환한다") {
             val reservationRepository = mockk<ReservationRepository>()
-            val platformSyncFacade = mockk<PlatformSyncFacade>()
-            val reservationService = ReservationService(reservationRepository, platformSyncFacade)
+            val platformSyncClient = mockk<PlatformSyncClient>()
+            val reservationService = ReservationService(reservationRepository, platformSyncClient)
 
             val reservation = newReservation()
             val existingEntity = reservation.toEntity().apply { id = 55L }
@@ -77,7 +75,7 @@ class ReservationServiceTest : FeatureSpec({
 
             result.id shouldBe 55L
             verify(exactly = 0) { reservationRepository.save(any()) }
-            verify(exactly = 0) { platformSyncFacade.syncReservationCreated(any()) }
+            verify(exactly = 0) { platformSyncClient.syncReservationCreated(any()) }
         }
     }
 })
