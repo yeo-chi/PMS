@@ -1,0 +1,6 @@
+spring:
+  application:
+    name: operation
+
+server:
+  port: 8082

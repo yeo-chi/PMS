@@ -1,0 +1,6 @@
+spring:
+  application:
+    name: reservation
+
+server:
+  port: 8081
