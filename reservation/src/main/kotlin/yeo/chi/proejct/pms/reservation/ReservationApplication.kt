@@ -21,7 +21,7 @@ import org.springframework.context.annotation.ComponentScan
 )
 @EntityScan(
 	basePackages = [
-		"yeo.chi.proejct.pms.reservation.domain",
+		"yeo.chi.proejct.pms.reservation.persistent",
 		"yeo.chi.proejct.pms.operation.domain",
 	],
 )
