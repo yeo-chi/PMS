@@ -61,6 +61,7 @@ Your goal is to help me write high-quality, idiomatic Spring Boot applications u
 
 - **JUnit 5:** JUnit 5 is the default and works seamlessly with Kotlin.
 - **Idiomatic Testing Libraries:** For more fluent and idiomatic tests, consider using **Kotest** for assertions and **MockK** for mocking. They are designed for Kotlin and offer a more expressive syntax.
+- **Kotest spec style (PMS project convention):** Use Kotest's `FeatureSpec` (`feature { scenario { ... } }`) for all new Kotest-based test classes, not `StringSpec` and not plain JUnit5 `@Test` classes. Apply this to repository/service/mapper unit tests as well as `@SpringBootTest` context tests where feasible.
 - **Test Slices:** Use test slice annotations like `@WebMvcTest` or `@DataJpaTest` to test specific parts of the application.
 - **Testcontainers:** Use Testcontainers for reliable integration tests with real databases, message brokers, etc.
 
