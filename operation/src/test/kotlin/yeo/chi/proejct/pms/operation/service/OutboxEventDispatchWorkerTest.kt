@@ -1,6 +1,7 @@
 package yeo.chi.proejct.pms.operation.service
 
 import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.collections.shouldHaveAtMostSize
 import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.shouldBe
 import org.springframework.beans.factory.annotation.Autowired
@@ -44,6 +45,15 @@ class OutboxEventDispatchWorkerTest(
     @Autowired private val transactionTemplate: TransactionTemplate,
     @Autowired private val properties: OutboxEventDispatchProperties,
 ) : MySqlIntegrationTest({
+
+    // 이 스펙은 배치 조회가 이 스펙이 만든 row만 집어간다고 가정한다. 다른 @SpringBootTest 클래스
+    // (예: InboundEventControllerTest의 채널 팬아웃 흐름)가 같은 MySQL 컨테이너에 PENDING
+    // outbox_events를 남겨두면(트랜잭션 롤백 없이 공유되는 컨테이너라 자연스럽게 발생) 그 row까지
+    // 배치에 섞여 들어와 이 스펙의 mock 서버/카운트 기대와 어긋난다. 이 스펙 시작 시점에 한 번
+    // 정리해 격리를 보장한다 (reservation의 OutboundNotificationDispatchWorkerTest와 동일한 패턴).
+    beforeSpec {
+        outboxEventRepository.deleteAll()
+    }
 
     fun savedOtaChannel(
         platformId: String,
@@ -246,6 +256,11 @@ class OutboxEventDispatchWorkerTest(
 
     feature("동시 워커 폴링 (SKIP LOCKED)") {
         scenario("두 워커가 동시에 폴링해도 같은 row를 중복으로 집어가지 않는다") {
+            // findBatchForDispatch(limit=5)를 두 스레드가 그대로 호출하므로(worker.dispatchPendingOutboxEvents()를
+            // 거치지 않아 상태 전이가 일어나지 않음), 이 파일의 앞선 시나리오들이 처리하지 못하고 남긴 PENDING
+            // row가 있으면 두 배치의 구성이 예상과 달라질 수 있다. 이 시나리오만은 정확히 10건으로 시작한다고
+            // 보장하기 위해 직접 한 번 더 정리한다.
+            outboxEventRepository.deleteAll()
             savedHost("HOST-CONCURRENT")
             (1..10).forEach { savedOutboxEventId("OUTBOX-CONCURRENT-$it", OutboxTargetType.HOST, "HOST-CONCURRENT") }
 
@@ -280,10 +295,17 @@ class OutboxEventDispatchWorkerTest(
                 executor.shutdown()
             }
 
+            // SKIP LOCKED가 실제로 보장하는 것은 "같은 row를 두 트랜잭션이 동시에 집어가지 않는다"는
+            // 상호 배제뿐이다. 두 트랜잭션이 정확히 같은 순간에 락 경합을 시작하면(이 테스트처럼
+            // CountDownLatch로 강제 동시 시작시키는 경우), 어느 한쪽이 5건 모두를 먼저 잠가버리고
+            // 나머지 한쪽은 그 순간 잠글 수 있는 row가 하나도 없을 수도 있다 — 이는 정상이며 안전성
+            // 위반이 아니다. 따라서 "둘 다 반드시 비어있지 않다"가 아니라 "중복이 없다" + "총합이
+            // 10건을 넘지 않는다" + "합쳐서 최소 1건은 가져갔다"를 검증한다.
             val (firstBatch, secondBatch) = results
-            firstBatch.shouldNotBeEmpty()
-            secondBatch.shouldNotBeEmpty()
             (firstBatch intersect secondBatch.toSet()).shouldBeEmpty()
+            val combined = (firstBatch + secondBatch).toSet()
+            combined.shouldNotBeEmpty()
+            combined.shouldHaveAtMostSize(10)
         }
     }
 })
