@@ -4,19 +4,25 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
+import jakarta.persistence.EntityManager
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.transaction.support.TransactionTemplate
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.domain.RequestResultStatus
+import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import yeo.chi.proejct.pms.reservation.domain.ReservationRequest
+import yeo.chi.proejct.pms.reservation.domain.ReservationRequestAction
 import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
 import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationRepository
 import yeo.chi.proejct.pms.reservation.persistent.PostgresIntegrationTest
 import yeo.chi.proejct.pms.reservation.persistent.ReservationRepository
 import yeo.chi.proejct.pms.reservation.persistent.ReservationRequestRepository
+import yeo.chi.proejct.pms.reservation.persistent.toEntity
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -27,6 +33,8 @@ class ReservationServiceTest(
     @Autowired private val reservationRepository: ReservationRepository,
     @Autowired private val reservationRequestRepository: ReservationRequestRepository,
     @Autowired private val outboundNotificationRepository: OutboundNotificationRepository,
+    @Autowired private val transactionTemplate: TransactionTemplate,
+    @Autowired private val entityManager: EntityManager,
 ) : PostgresIntegrationTest({
 
     fun bookCommand(
@@ -42,6 +50,16 @@ class ReservationServiceTest(
             roomCode = roomCode,
             dateRange = ReservationDateRange(startDate, endDate),
             initiatedBy = initiatedBy,
+        )
+
+    fun cancelConfirmCommand(
+        platformReservationRef: String,
+        externalRequestId: String,
+    ): CancelConfirmCommand =
+        CancelConfirmCommand(
+            platformId = "OTA_BOOKING",
+            platformReservationRef = platformReservationRef,
+            externalRequestId = externalRequestId,
         )
 
     feature("BOOK 처리 성공") {
@@ -130,6 +148,125 @@ class ReservationServiceTest(
 
             val successReservationId = outcomes.first { it.resultStatus == RequestResultStatus.SUCCESS }.reservationId
             outboundNotificationRepository.findAll().count { it.reservationId == successReservationId } shouldBe 1
+        }
+    }
+
+    feature("CANCEL_CONFIRM 처리") {
+        scenario("CONFIRMED 예약에 대한 취소통보는 CANCELLED로 전이하고 알림을 정확히 1건 남긴다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-1", "ROOM-CANCEL-1", LocalDate.of(2027, 5, 1), LocalDate.of(2027, 5, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+
+            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-1", "EXT-CANCEL-1"))
+
+            result.resultStatus shouldBe RequestResultStatus.SUCCESS
+            result.reservationId shouldBe reservationId
+            reservationRepository.findById(reservationId).orElseThrow().status shouldBe ReservationStatus.CANCELLED
+            outboundNotificationRepository.findAll().count {
+                it.reservationId == reservationId && it.eventType == "RESERVATION_CANCELLED"
+            } shouldBe 1
+        }
+
+        scenario("PENDING_CANCEL 예약에 대한 취소통보도 CANCELLED로 전이한다") {
+            val now = OffsetDateTime.now()
+            val pendingReservation =
+                reservationRepository.saveAndFlush(
+                    Reservation(
+                        id = null,
+                        reservationNo = null,
+                        platformId = "OTA_BOOKING",
+                        platformReservationRef = "REF-CANCEL-2",
+                        roomCode = "ROOM-CANCEL-2",
+                        dateRange = ReservationDateRange(LocalDate.of(2027, 6, 1), LocalDate.of(2027, 6, 5)),
+                        status = ReservationStatus.PENDING_CANCEL,
+                        version = 1,
+                        createdAt = now,
+                        updatedAt = now,
+                    ).toEntity(),
+                )
+
+            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-2", "EXT-CANCEL-2"))
+
+            result.resultStatus shouldBe RequestResultStatus.SUCCESS
+            reservationRepository.findById(pendingReservation.id).orElseThrow().status shouldBe ReservationStatus.CANCELLED
+            outboundNotificationRepository.findAll().count { it.reservationId == pendingReservation.id } shouldBe 1
+        }
+
+        scenario("이미 CANCELLED인 예약에 재통보하면 재전이·재알림 없이 SUCCESS 감사 기록만 추가된다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-3", "ROOM-CANCEL-3", LocalDate.of(2027, 7, 1), LocalDate.of(2027, 7, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+            reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-3", "EXT-CANCEL-3-FIRST"))
+            val versionAfterFirstCancel = reservationRepository.findById(reservationId).orElseThrow().version
+
+            val secondResult = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-3", "EXT-CANCEL-3-SECOND"))
+
+            secondResult.resultStatus shouldBe RequestResultStatus.SUCCESS
+            val reservationAfterSecondCancel = reservationRepository.findById(reservationId).orElseThrow()
+            reservationAfterSecondCancel.status shouldBe ReservationStatus.CANCELLED
+            reservationAfterSecondCancel.version shouldBe versionAfterFirstCancel
+            outboundNotificationRepository.findAll().count {
+                it.reservationId == reservationId && it.eventType == "RESERVATION_CANCELLED"
+            } shouldBe 1
+            reservationRequestRepository.findAll().count {
+                it.reservationId == reservationId && it.action == ReservationRequestAction.CANCEL_CONFIRM
+            } shouldBe 2
+        }
+
+        scenario("존재하지 않는 예약에 대한 취소통보는 FAILED로 기록되고 알림을 남기지 않는다") {
+            val notificationCountBefore = outboundNotificationRepository.findAll().size
+
+            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-NOT-FOUND", "EXT-CANCEL-NOT-FOUND"))
+
+            result.resultStatus shouldBe RequestResultStatus.FAILED
+            result.rejectReason shouldBe "RESERVATION_NOT_FOUND"
+            result.reservationId.shouldBeNull()
+            outboundNotificationRepository.findAll() shouldHaveSize notificationCountBefore
+        }
+
+        scenario("같은 externalRequestId로 재요청하면 재처리 없이 이전 결과를 그대로 반환한다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-4", "ROOM-CANCEL-4", LocalDate.of(2027, 8, 1), LocalDate.of(2027, 8, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+            val command = cancelConfirmCommand("REF-CANCEL-4", "EXT-CANCEL-4")
+
+            val firstResult = reservationService.cancelConfirm(command)
+            val secondResult = reservationService.cancelConfirm(command)
+
+            secondResult.id shouldBe firstResult.id
+            outboundNotificationRepository.findAll().count {
+                it.reservationId == reservationId && it.eventType == "RESERVATION_CANCELLED"
+            } shouldBe 1
+            reservationRequestRepository.findAll().count { it.requestKey == firstResult.requestKey } shouldBe 1
+        }
+
+        scenario("낙관적 락 충돌이 나도 재시도해 결국 성공한다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-5", "ROOM-CANCEL-5", LocalDate.of(2027, 9, 1), LocalDate.of(2027, 9, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+
+            // 다른 트랜잭션이 먼저 커밋해 version을 올려놓은 상황을 시뮬레이션해, 첫 시도가 반드시
+            // 낙관적 락 충돌을 겪게 만든다. 이 테스트 자체는 트랜잭션으로 감싸여 있지 않으므로
+            // (@SpringBootTest, @DataJpaTest 아님) 별도 트랜잭션에서 커밋해야 재시도 루프의 새 조회에 보인다.
+            transactionTemplate.execute {
+                entityManager
+                    .createNativeQuery("UPDATE reservations SET version = version + 1 WHERE id = :id")
+                    .setParameter("id", reservationId)
+                    .executeUpdate()
+            }
+
+            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-5", "EXT-CANCEL-5"))
+
+            result.resultStatus shouldBe RequestResultStatus.SUCCESS
+            reservationRepository.findById(reservationId).orElseThrow().status shouldBe ReservationStatus.CANCELLED
         }
     }
 })
