@@ -40,7 +40,7 @@ class OutboundNotificationRepositoryTest(
 
     fun newNotification(
         notificationKey: String,
-        reservationId: Long,
+        reservationId: Long?,
     ): OutboundNotification {
         val now = OffsetDateTime.now()
         return OutboundNotification(
@@ -75,6 +75,12 @@ class OutboundNotificationRepositoryTest(
             shouldThrow<DataIntegrityViolationException> {
                 outboundNotificationRepository.saveAndFlush(newNotification("NOTIFY-DUP", reservationId).toEntity())
             }
+        }
+
+        scenario("BOOK 겹침 거부처럼 reservation_id가 null이어도 저장할 수 있다") {
+            val saved = outboundNotificationRepository.saveAndFlush(newNotification("NOTIFY-NO-RESERVATION", null).toEntity())
+
+            saved.reservationId shouldBe null
         }
     }
 })

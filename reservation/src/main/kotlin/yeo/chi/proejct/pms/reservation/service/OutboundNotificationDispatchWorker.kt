@@ -1,5 +1,6 @@
 package yeo.chi.proejct.pms.reservation.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.http.MediaType
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -21,6 +22,7 @@ class OutboundNotificationDispatchWorker(
     private val transactionTemplate: TransactionTemplate,
     private val operationRestClient: RestClient,
     private val properties: OutboundNotificationDispatchProperties,
+    private val objectMapper: ObjectMapper,
 ) {
 
     // SELECT ... FOR UPDATE SKIP LOCKED로 얻은 락은 이 트랜잭션이 끝나야 풀린다. "배치 조회 + 각 건 발송 +
@@ -40,10 +42,7 @@ class OutboundNotificationDispatchWorker(
     // (operation의 OutboxEventDispatchWorker.dispatchOne과 동일한 이유로 동일하게 넓힌다).
     private fun dispatchOne(notification: OutboundNotificationEntity) {
         try {
-            val reservationNo =
-                requireNotNull(reservationRepository.findById(notification.reservationId).orElseThrow().reservationNo) {
-                    "저장된 예약은 reservation_no를 가지고 있어야 합니다"
-                }
+            val reservationNo = resolveReservationNo(notification)
 
             operationRestClient
                 .post()
@@ -71,6 +70,24 @@ class OutboundNotificationDispatchWorker(
             notification.nextRetryAt = computeNextRetryAt(notification.retryCount, properties)
         }
         outboundNotificationRepository.saveAndFlush(notification)
+    }
+
+    // BOOK이 겹침으로 거부된 경우(RESERVATION_REJECTED) reservationId가 null이다 — 예약 row 자체가
+    // 없어 DB에서 reservation_no를 조회할 수 없으므로, 발행 시점에 payload 안에 담아둔 reservationNo를
+    // 그대로 읽는다(ReservationService.rejectedNotificationEntity 참고).
+    private fun resolveReservationNo(notification: OutboundNotificationEntity): String {
+        val reservationId = notification.reservationId
+        return if (reservationId != null) {
+            requireNotNull(reservationRepository.findById(reservationId).orElseThrow().reservationNo) {
+                "저장된 예약은 reservation_no를 가지고 있어야 합니다"
+            }
+        } else {
+            val payloadNode = objectMapper.readTree(notification.payload)
+            requireNotNull(payloadNode.get("reservationNo")?.asText()) {
+                "reservationId가 없는 알림은 payload에 reservationNo가 있어야 합니다: " +
+                    "notificationKey=${notification.notificationKey}"
+            }
+        }
     }
 }
 

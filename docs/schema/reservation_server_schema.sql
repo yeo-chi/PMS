@@ -123,7 +123,9 @@ CREATE TABLE outbound_notifications (
     -- 운영 서버로 API 호출 시 이 값을 그대로 전달하여, 운영 서버도 동일한 값으로 수신 멱등성을 보장하게 한다.
     notification_key               VARCHAR(256) NOT NULL,
 
-    reservation_id                 BIGINT NOT NULL REFERENCES reservations(id),
+    -- BOOK이 겹침으로 거부된 경우 예약 row 자체가 없어 참조할 대상이 없으므로 nullable이다.
+    -- 이 경우 payload에 reservationNo를 담아 발신 시 대체한다.
+    reservation_id                 BIGINT REFERENCES reservations(id),
     request_id                     BIGINT REFERENCES reservation_requests(id),
 
     -- RESERVATION_CONFIRMED, RESERVATION_REJECTED(중복예약 등으로 거부),
