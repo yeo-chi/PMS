@@ -8,6 +8,7 @@ import jakarta.persistence.EntityManager
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.support.TransactionTemplate
+import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.domain.RequestResultStatus
@@ -267,6 +268,132 @@ class ReservationServiceTest(
 
             result.resultStatus shouldBe RequestResultStatus.SUCCESS
             reservationRepository.findById(reservationId).orElseThrow().status shouldBe ReservationStatus.CANCELLED
+        }
+    }
+
+    feature("CANCEL_REQUEST 처리") {
+        scenario("CONFIRMED 예약에 대한 취소요청은 PENDING_CANCEL로 전이하고 알림을 정확히 1건 남긴다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-REQ-1", "ROOM-CANCEL-REQ-1", LocalDate.of(2028, 1, 1), LocalDate.of(2028, 1, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+
+            val result =
+                reservationService.cancelRequest(
+                    CancelRequestCommand(reservationId, CancelRequestReason.OVERBOOKING_CLEANUP),
+                )
+
+            result.resultStatus shouldBe RequestResultStatus.SUCCESS
+            result.rejectReason shouldBe "OVERBOOKING_CLEANUP"
+            reservationRepository.findById(reservationId).orElseThrow().status shouldBe ReservationStatus.PENDING_CANCEL
+            outboundNotificationRepository.findAll().count {
+                it.reservationId == reservationId && it.eventType == "CANCEL_REQUESTED"
+            } shouldBe 1
+        }
+
+        scenario("PENDING_CANCEL 상태에서도 같은 room_code·겹치는 날짜의 신규 BOOK은 계속 거부된다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-REQ-2", "ROOM-CANCEL-REQ-2", LocalDate.of(2028, 2, 1), LocalDate.of(2028, 2, 10)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+            reservationService.cancelRequest(CancelRequestCommand(reservationId, CancelRequestReason.FACILITY_ISSUE))
+
+            val overlappingBookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-REQ-2-OVERLAP", "ROOM-CANCEL-REQ-2", LocalDate.of(2028, 2, 5), LocalDate.of(2028, 2, 15)),
+                )
+
+            overlappingBookResult.resultStatus shouldBe RequestResultStatus.CONFLICT
+        }
+
+        scenario("이미 PENDING_CANCEL인 예약에 재요청하면 재전이 없이 감사 기록만 추가된다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-REQ-3", "ROOM-CANCEL-REQ-3", LocalDate.of(2028, 3, 1), LocalDate.of(2028, 3, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+            reservationService.cancelRequest(CancelRequestCommand(reservationId, CancelRequestReason.OTHER))
+            val versionAfterFirstRequest = reservationRepository.findById(reservationId).orElseThrow().version
+
+            val secondResult =
+                reservationService.cancelRequest(CancelRequestCommand(reservationId, CancelRequestReason.OTHER))
+
+            secondResult.resultStatus shouldBe RequestResultStatus.SUCCESS
+            val reservationAfterSecondRequest = reservationRepository.findById(reservationId).orElseThrow()
+            reservationAfterSecondRequest.status shouldBe ReservationStatus.PENDING_CANCEL
+            reservationAfterSecondRequest.version shouldBe versionAfterFirstRequest
+            outboundNotificationRepository.findAll().count {
+                it.reservationId == reservationId && it.eventType == "CANCEL_REQUESTED"
+            } shouldBe 1
+            reservationRequestRepository.findAll().count { it.reservationId == reservationId } shouldBe 2
+        }
+
+        scenario("이미 CANCELLED인 예약에 취소요청하면 FAILED로 기록되고 알림을 남기지 않는다") {
+            val now = OffsetDateTime.now()
+            val cancelledReservation =
+                reservationRepository.saveAndFlush(
+                    Reservation(
+                        id = null,
+                        reservationNo = null,
+                        platformId = "OTA_BOOKING",
+                        platformReservationRef = "REF-CANCEL-REQ-4",
+                        roomCode = "ROOM-CANCEL-REQ-4",
+                        dateRange = ReservationDateRange(LocalDate.of(2028, 4, 1), LocalDate.of(2028, 4, 5)),
+                        status = ReservationStatus.CANCELLED,
+                        version = 1,
+                        createdAt = now,
+                        updatedAt = now,
+                    ).toEntity(),
+                )
+
+            val result =
+                reservationService.cancelRequest(
+                    CancelRequestCommand(cancelledReservation.id, CancelRequestReason.OVERBOOKING_CLEANUP),
+                )
+
+            result.resultStatus shouldBe RequestResultStatus.FAILED
+            result.rejectReason shouldBe "ALREADY_CANCELLED"
+            outboundNotificationRepository.findAll().count { it.reservationId == cancelledReservation.id } shouldBe 0
+        }
+
+        scenario("존재하지 않는 예약에 대한 취소요청은 FAILED로 기록되고 알림을 남기지 않는다") {
+            val notificationCountBefore = outboundNotificationRepository.findAll().size
+
+            val result =
+                reservationService.cancelRequest(CancelRequestCommand(-1L, CancelRequestReason.OTHER))
+
+            result.resultStatus shouldBe RequestResultStatus.FAILED
+            result.rejectReason shouldBe "RESERVATION_NOT_FOUND"
+            result.reservationId.shouldBeNull()
+            outboundNotificationRepository.findAll() shouldHaveSize notificationCountBefore
+        }
+
+        scenario("낙관적 락 충돌이 나도 재시도해 결국 PENDING_CANCEL 전이에 성공한다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-REQ-5", "ROOM-CANCEL-REQ-5", LocalDate.of(2028, 5, 1), LocalDate.of(2028, 5, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+
+            // 다른 트랜잭션이 먼저 커밋해 version을 올려놓은 상황을 시뮬레이션해, 첫 시도가 반드시 낙관적 락
+            // 충돌을 겪게 만든다. 이 테스트는 트랜잭션으로 감싸여 있지 않으므로(@DataJpaTest 아님) 별도
+            // 트랜잭션에서 커밋해야 재시도 루프의 새 조회에 보인다.
+            transactionTemplate.execute {
+                entityManager
+                    .createNativeQuery("UPDATE reservations SET version = version + 1 WHERE id = :id")
+                    .setParameter("id", reservationId)
+                    .executeUpdate()
+            }
+
+            val result =
+                reservationService.cancelRequest(
+                    CancelRequestCommand(reservationId, CancelRequestReason.OVERBOOKING_CLEANUP),
+                )
+
+            result.resultStatus shouldBe RequestResultStatus.SUCCESS
+            reservationRepository.findById(reservationId).orElseThrow().status shouldBe ReservationStatus.PENDING_CANCEL
         }
     }
 })

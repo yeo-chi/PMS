@@ -5,6 +5,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotification
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
@@ -27,9 +28,12 @@ import java.time.OffsetDateTime
 
 private const val DUPLICATE_BOOKING_REJECT_REASON = "DUPLICATE_BOOKING"
 private const val RESERVATION_NOT_FOUND_REJECT_REASON = "RESERVATION_NOT_FOUND"
+private const val ALREADY_CANCELLED_REJECT_REASON = "ALREADY_CANCELLED"
 private const val RESERVATION_CONFIRMED_EVENT_TYPE = "RESERVATION_CONFIRMED"
 private const val RESERVATION_CANCELLED_EVENT_TYPE = "RESERVATION_CANCELLED"
+private const val CANCEL_REQUESTED_EVENT_TYPE = "CANCEL_REQUESTED"
 private const val CANCEL_CONFIRM_MAX_ATTEMPTS = 3
+private const val CANCEL_REQUEST_MAX_ATTEMPTS = 3
 
 private data class ReservationConfirmedPayload(
     val reservationNo: String,
@@ -45,6 +49,15 @@ private data class ReservationCancelledPayload(
     val roomCode: String,
     val startDate: LocalDate,
     val endDate: LocalDate,
+)
+
+private data class ReservationCancelRequestedPayload(
+    val reservationNo: String,
+    val platformId: String,
+    val roomCode: String,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val reason: CancelRequestReason,
 )
 
 @Service
@@ -322,6 +335,189 @@ class ReservationService(
             reservationId = reservation.id,
             requestId = requestId,
             eventType = RESERVATION_CANCELLED_EVENT_TYPE,
+            payload = objectMapper.writeValueAsString(payload),
+            status = OutboundNotificationStatus.PENDING,
+            retryCount = 0,
+            nextRetryAt = now,
+            createdAt = now,
+            updatedAt = now,
+        ).toEntity()
+    }
+
+    fun cancelRequest(command: CancelRequestCommand): ReservationRequest {
+        val requestKey = buildCancelRequestKey(command.reservationId, OffsetDateTime.now())
+
+        reservationRequestRepository.findByRequestKey(requestKey)?.let { existingRequest ->
+            return existingRequest.toDomain()
+        }
+
+        return cancelRequestWithRetry(command, requestKey)
+    }
+
+    // 낙관적 락 충돌은 attemptCancelRequest의 트랜잭션 "밖"에서 잡는다 (#15의 cancelConfirm과 동일한 이유 —
+    // 실패한 트랜잭션의 Hibernate 세션을 재사용하면 예외 이후 flush 문제가 생긴다).
+    private fun cancelRequestWithRetry(
+        command: CancelRequestCommand,
+        requestKey: String,
+    ): ReservationRequest {
+        var attempt = 1
+        while (true) {
+            try {
+                return attemptCancelRequest(command, requestKey)
+            } catch (staleVersion: ObjectOptimisticLockingFailureException) {
+                if (attempt >= CANCEL_REQUEST_MAX_ATTEMPTS) throw staleVersion
+                attempt++
+            }
+        }
+    }
+
+    private fun attemptCancelRequest(
+        command: CancelRequestCommand,
+        requestKey: String,
+    ): ReservationRequest =
+        checkNotNull(
+            transactionTemplate.execute {
+                val reservation = reservationRepository.findById(command.reservationId).orElse(null)
+
+                if (reservation == null) {
+                    // reservation_requests.platform_id는 NOT NULL이지만, 호스트가 존재하지 않는 reservationId로
+                    // 요청한 경우 어떤 채널(platformId)과도 연관지을 수 없어 감사 로그 row를 만들 수 없다.
+                    // DB에는 아무것도 남기지 않고 합성된(비영속) FAILED 결과만 반환한다.
+                    reservationNotFoundResult(requestKey)
+                } else {
+                    when (reservation.status) {
+                        ReservationStatus.CONFIRMED -> confirmCancelRequest(command, requestKey, reservation)
+
+                        ReservationStatus.PENDING_CANCEL ->
+                            reservationRequestRepository
+                                .saveAndFlush(alreadyPendingCancelRequest(command, requestKey, reservation).toEntity())
+                                .toDomain()
+
+                        ReservationStatus.CANCELLED ->
+                            reservationRequestRepository
+                                .saveAndFlush(alreadyCancelledCancelRequest(requestKey, reservation).toEntity())
+                                .toDomain()
+                    }
+                }
+            },
+        ) { "CANCEL_REQUEST 트랜잭션은 항상 값을 반환해야 합니다" }
+
+    private fun confirmCancelRequest(
+        command: CancelRequestCommand,
+        requestKey: String,
+        reservation: ReservationEntity,
+    ): ReservationRequest {
+        val now = OffsetDateTime.now()
+        val currentDateRange = reservation.dateRange.toReservationDateRange()
+
+        reservation.status = ReservationStatus.PENDING_CANCEL
+        val savedReservation = reservationRepository.saveAndFlush(reservation)
+
+        val savedRequest =
+            reservationRequestRepository.saveAndFlush(
+                ReservationRequest(
+                    id = null,
+                    requestKey = requestKey,
+                    reservationId = savedReservation.id,
+                    platformId = savedReservation.platformId,
+                    action = ReservationRequestAction.CANCEL_REQUEST,
+                    initiatedBy = RequestInitiator.HOST,
+                    roomCode = savedReservation.roomCode,
+                    oldDateRange = currentDateRange,
+                    newDateRange = null,
+                    resultStatus = RequestResultStatus.SUCCESS,
+                    rejectReason = command.reason.name,
+                    requestedAt = now,
+                ).toEntity(),
+            )
+
+        outboundNotificationRepository.saveAndFlush(
+            cancelRequestedNotificationEntity(savedReservation, savedRequest.id, command.reason, now),
+        )
+
+        return savedRequest.toDomain()
+    }
+
+    private fun reservationNotFoundResult(requestKey: String): ReservationRequest =
+        ReservationRequest(
+            id = null,
+            requestKey = requestKey,
+            reservationId = null,
+            platformId = "",
+            action = ReservationRequestAction.CANCEL_REQUEST,
+            initiatedBy = RequestInitiator.HOST,
+            roomCode = null,
+            oldDateRange = null,
+            newDateRange = null,
+            resultStatus = RequestResultStatus.FAILED,
+            rejectReason = RESERVATION_NOT_FOUND_REJECT_REASON,
+            requestedAt = OffsetDateTime.now(),
+        )
+
+    private fun alreadyPendingCancelRequest(
+        command: CancelRequestCommand,
+        requestKey: String,
+        reservation: ReservationEntity,
+    ): ReservationRequest =
+        ReservationRequest(
+            id = null,
+            requestKey = requestKey,
+            reservationId = reservation.id,
+            platformId = reservation.platformId,
+            action = ReservationRequestAction.CANCEL_REQUEST,
+            initiatedBy = RequestInitiator.HOST,
+            roomCode = reservation.roomCode,
+            oldDateRange = reservation.dateRange.toReservationDateRange(),
+            newDateRange = null,
+            resultStatus = RequestResultStatus.SUCCESS,
+            rejectReason = command.reason.name,
+            requestedAt = OffsetDateTime.now(),
+        )
+
+    private fun alreadyCancelledCancelRequest(
+        requestKey: String,
+        reservation: ReservationEntity,
+    ): ReservationRequest =
+        ReservationRequest(
+            id = null,
+            requestKey = requestKey,
+            reservationId = reservation.id,
+            platformId = reservation.platformId,
+            action = ReservationRequestAction.CANCEL_REQUEST,
+            initiatedBy = RequestInitiator.HOST,
+            roomCode = reservation.roomCode,
+            oldDateRange = reservation.dateRange.toReservationDateRange(),
+            newDateRange = null,
+            resultStatus = RequestResultStatus.FAILED,
+            rejectReason = ALREADY_CANCELLED_REJECT_REASON,
+            requestedAt = OffsetDateTime.now(),
+        )
+
+    private fun cancelRequestedNotificationEntity(
+        reservation: ReservationEntity,
+        requestId: Long,
+        reason: CancelRequestReason,
+        now: OffsetDateTime,
+    ): OutboundNotificationEntity {
+        val reservationNo =
+            requireNotNull(reservation.reservationNo) { "저장된 예약은 reservation_no를 가지고 있어야 합니다" }
+        val dateRange = reservation.dateRange.toReservationDateRange()
+        val payload =
+            ReservationCancelRequestedPayload(
+                reservationNo = reservationNo,
+                platformId = reservation.platformId,
+                roomCode = reservation.roomCode,
+                startDate = dateRange.startDate,
+                endDate = dateRange.endDate,
+                reason = reason,
+            )
+
+        return OutboundNotification(
+            id = null,
+            notificationKey = "$reservationNo:$CANCEL_REQUESTED_EVENT_TYPE",
+            reservationId = reservation.id,
+            requestId = requestId,
+            eventType = CANCEL_REQUESTED_EVENT_TYPE,
             payload = objectMapper.writeValueAsString(payload),
             status = OutboundNotificationStatus.PENDING,
             retryCount = 0,
