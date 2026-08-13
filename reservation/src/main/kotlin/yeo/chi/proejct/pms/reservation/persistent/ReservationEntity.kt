@@ -37,7 +37,7 @@ class ReservationEntity(
     val roomCode: String,
     @Type(PostgreSQLRangeType::class)
     @Column(name = "date_range", columnDefinition = "daterange")
-    val dateRange: Range<LocalDate>,
+    var dateRange: Range<LocalDate>,
     @Enumerated(EnumType.STRING)
     @Column(name = "status")
     var status: ReservationStatus,
