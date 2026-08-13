@@ -38,7 +38,7 @@ class ReservationController(
     ): ResponseEntity<ReservationRequestResponse> {
         val result =
             reservationService.cancelRequest(
-                CancelRequestCommand(reservationId, requireNotNull(request.reason)),
+                CancelRequestCommand(reservationId, requireNotNull(request.reason), request.externalRequestId),
             )
         return ResponseEntity.status(result.toHttpStatus()).body(result.toResponse())
     }
