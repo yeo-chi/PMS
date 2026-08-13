@@ -111,6 +111,12 @@ class ReservationServiceTest(
 
             shouldThrow<IllegalArgumentException> { reservationService.book(command) }
         }
+
+        scenario("startDate가 endDate보다 이전이 아닌 BOOK 요청은 거부된다") {
+            shouldThrow<IllegalArgumentException> {
+                bookCommand("REF-BOOK-INVERTED", "ROOM-BOOK-INVERTED", LocalDate.of(2027, 3, 5), LocalDate.of(2027, 3, 1))
+            }
+        }
     }
 
     feature("동시 겹침 요청") {

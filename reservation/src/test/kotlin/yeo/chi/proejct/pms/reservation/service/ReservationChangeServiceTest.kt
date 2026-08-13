@@ -281,5 +281,11 @@ class ReservationChangeServiceTest(
 
             shouldThrow<IllegalArgumentException> { reservationService.change(command) }
         }
+
+        scenario("startDate가 endDate보다 이전이 아닌 CHANGE 요청은 거부된다") {
+            shouldThrow<IllegalArgumentException> {
+                changeCommand("REF-CHANGE-INVERTED", LocalDate.of(2029, 9, 5), LocalDate.of(2029, 9, 1))
+            }
+        }
     }
 })
