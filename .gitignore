@@ -1,0 +1,8 @@
+.gradle
+.idea
+
+build
+
+HELP.md
+
+.claude/settings.local.json
