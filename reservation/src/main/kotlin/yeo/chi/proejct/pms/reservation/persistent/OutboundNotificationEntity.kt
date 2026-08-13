@@ -33,11 +33,11 @@ class OutboundNotificationEntity(
     val payload: String,
     @Enumerated(EnumType.STRING)
     @Column(name = "status")
-    val status: OutboundNotificationStatus,
+    var status: OutboundNotificationStatus,
     @Column(name = "retry_count")
-    val retryCount: Int,
+    var retryCount: Int,
     @Column(name = "next_retry_at")
-    val nextRetryAt: OffsetDateTime,
+    var nextRetryAt: OffsetDateTime,
     @Column(name = "created_at")
     val createdAt: OffsetDateTime,
     @Column(name = "updated_at")

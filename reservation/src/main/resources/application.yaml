@@ -17,3 +17,12 @@ server:
 
 operation:
   base-url: http://localhost:8082
+  connect-timeout-seconds: 2
+  read-timeout-seconds: 5
+
+outbound-notification:
+  batch-size: 20
+  max-retry-count: 5
+  initial-backoff-seconds: 30
+  max-backoff-seconds: 1800
+  poll-interval-millis: 5000
