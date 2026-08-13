@@ -1,6 +1,7 @@
 package yeo.chi.proejct.pms.operation.controller
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
@@ -9,11 +10,25 @@ import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import yeo.chi.proejct.pms.operation.domain.Host
+import yeo.chi.proejct.pms.operation.domain.HostStatus
+import yeo.chi.proejct.pms.operation.domain.OtaChannel
+import yeo.chi.proejct.pms.operation.domain.OtaChannelIntegrationMode
+import yeo.chi.proejct.pms.operation.domain.OtaChannelStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxEventStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxTargetType
+import yeo.chi.proejct.pms.operation.domain.Room
+import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
+import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
+import yeo.chi.proejct.pms.operation.domain.RoomStatus
+import yeo.chi.proejct.pms.operation.persistent.HostRepository
 import yeo.chi.proejct.pms.operation.persistent.InboundEventRepository
 import yeo.chi.proejct.pms.operation.persistent.MySqlIntegrationTest
+import yeo.chi.proejct.pms.operation.persistent.OtaChannelRepository
 import yeo.chi.proejct.pms.operation.persistent.OutboxEventRepository
+import yeo.chi.proejct.pms.operation.persistent.RoomChannelListingRepository
+import yeo.chi.proejct.pms.operation.persistent.RoomRepository
+import yeo.chi.proejct.pms.operation.persistent.toEntity
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -24,6 +39,10 @@ class InboundEventControllerTest(
     @Autowired private val mockMvc: MockMvc,
     @Autowired private val inboundEventRepository: InboundEventRepository,
     @Autowired private val outboxEventRepository: OutboxEventRepository,
+    @Autowired private val hostRepository: HostRepository,
+    @Autowired private val roomRepository: RoomRepository,
+    @Autowired private val roomChannelListingRepository: RoomChannelListingRepository,
+    @Autowired private val otaChannelRepository: OtaChannelRepository,
     @Autowired private val objectMapper: ObjectMapper,
 ) : MySqlIntegrationTest({
 
@@ -33,12 +52,13 @@ class InboundEventControllerTest(
         eventType: String,
         includePlatformId: Boolean = true,
         platformId: String = "OTA_BOOKING",
+        roomCode: String = "ROOM-101",
     ): String {
         val payloadJson =
             if (includePlatformId) {
-                """{"platformId":"$platformId","roomCode":"ROOM-101"}"""
+                """{"platformId":"$platformId","roomCode":"$roomCode"}"""
             } else {
-                """{"roomCode":"ROOM-101"}"""
+                """{"roomCode":"$roomCode"}"""
             }
         return """
             {
@@ -48,6 +68,77 @@ class InboundEventControllerTest(
               "payload": $payloadJson
             }
         """.trimIndent()
+    }
+
+    fun savedRoomId(roomCode: String): Long {
+        val hostId =
+            hostRepository
+                .saveAndFlush(
+                    Host(
+                        id = null,
+                        hostCode = "HOST-$roomCode",
+                        name = "호스트 이름",
+                        contactEmail = null,
+                        contactPhone = null,
+                        status = HostStatus.ACTIVE,
+                        createdAt = null,
+                        updatedAt = null,
+                    ).toEntity(),
+                ).id
+        return roomRepository
+            .saveAndFlush(
+                Room(
+                    id = null,
+                    roomCode = roomCode,
+                    hostId = hostId,
+                    name = "디럭스 룸",
+                    address = null,
+                    capacity = null,
+                    status = RoomStatus.ACTIVE,
+                    createdAt = null,
+                    updatedAt = null,
+                ).toEntity(),
+            ).id
+    }
+
+    fun savedOtaChannelId(
+        platformId: String,
+        status: OtaChannelStatus = OtaChannelStatus.ACTIVE,
+    ): Long =
+        otaChannelRepository
+            .saveAndFlush(
+                OtaChannel(
+                    id = null,
+                    platformId = platformId,
+                    name = platformId,
+                    integrationMode = OtaChannelIntegrationMode.ASYNC,
+                    callbackBaseUrl = null,
+                    apiKeyRef = null,
+                    status = status,
+                    createdAt = null,
+                    updatedAt = null,
+                ).toEntity(),
+            ).id
+
+    fun savedListing(
+        roomId: Long,
+        otaChannelId: Long,
+        platformId: String,
+        status: RoomChannelListingStatus = RoomChannelListingStatus.ACTIVE,
+    ) {
+        roomChannelListingRepository.saveAndFlush(
+            RoomChannelListing(
+                id = null,
+                listingKey = null,
+                roomId = roomId,
+                otaChannelId = otaChannelId,
+                platformId = platformId,
+                externalProductId = "EXT-$platformId",
+                status = status,
+                createdAt = null,
+                updatedAt = null,
+            ).toEntity(),
+        )
     }
 
     feature("신규 수신 성공") {
@@ -176,6 +267,137 @@ class InboundEventControllerTest(
             statusCodes.forEach { it shouldBe 200 }
             inboundEventRepository.findAll().count { it.notificationKey == notificationKey } shouldBe 1
             outboxEventRepository.findAll().count { it.reservationNo == "OTA_BOOKING:REF-CONCURRENT" } shouldBe 1
+        }
+    }
+
+    feature("채널 팬아웃") {
+        scenario("2개 이상 채널에 노출된 방에 예약 확정 이벤트 수신 시 다른 채널에 INVENTORY_CLOSED로 팬아웃된다") {
+            val roomCode = "ROOM-FANOUT-1"
+            val roomId = savedRoomId(roomCode)
+            listOf("A", "B", "C").forEach { savedListing(roomId, savedOtaChannelId("OTA_$it"), "OTA_$it") }
+            val notificationKey = "NOTIFY-FANOUT-CONFIRMED"
+            val reservationNo = "OTA_A:REF-FANOUT-CONFIRMED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CONFIRMED", platformId = "OTA_A", roomCode = roomCode),
+                        ),
+                ).andExpect(status().isOk)
+
+            val outboxEvents = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
+            outboxEvents shouldHaveSize 3
+            outboxEvents.count { it.targetCode == "OTA_A" && it.eventType == "RESERVATION_CONFIRMED" } shouldBe 1
+            outboxEvents.count { it.targetCode == "OTA_B" && it.eventType == "INVENTORY_CLOSED" } shouldBe 1
+            outboxEvents.count { it.targetCode == "OTA_C" && it.eventType == "INVENTORY_CLOSED" } shouldBe 1
+            outboxEvents.none { it.targetCode == "OTA_A" && it.eventType == "INVENTORY_CLOSED" } shouldBe true
+        }
+
+        scenario("취소확정 이벤트는 다른 채널에 INVENTORY_REOPENED로 팬아웃된다") {
+            val roomCode = "ROOM-FANOUT-2"
+            val roomId = savedRoomId(roomCode)
+            listOf("A", "B", "C").forEach { savedListing(roomId, savedOtaChannelId("OTA2_$it"), "OTA2_$it") }
+            val notificationKey = "NOTIFY-FANOUT-CANCELLED"
+            val reservationNo = "OTA2_A:REF-FANOUT-CANCELLED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CANCELLED", platformId = "OTA2_A", roomCode = roomCode),
+                        ),
+                ).andExpect(status().isOk)
+
+            val outboxEvents = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
+            outboxEvents shouldHaveSize 3
+            outboxEvents.count { it.targetCode == "OTA2_B" && it.eventType == "INVENTORY_REOPENED" } shouldBe 1
+            outboxEvents.count { it.targetCode == "OTA2_C" && it.eventType == "INVENTORY_REOPENED" } shouldBe 1
+        }
+
+        scenario("노출 채널이 자기 자신뿐이면 팬아웃이 발생하지 않는다") {
+            val roomCode = "ROOM-FANOUT-3"
+            val roomId = savedRoomId(roomCode)
+            savedListing(roomId, savedOtaChannelId("OTA3_SOLO"), "OTA3_SOLO")
+            val notificationKey = "NOTIFY-FANOUT-SOLO"
+            val reservationNo = "OTA3_SOLO:REF-FANOUT-SOLO"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CONFIRMED", platformId = "OTA3_SOLO", roomCode = roomCode),
+                        ),
+                ).andExpect(status().isOk)
+
+            outboxEventRepository.findAll().count { it.reservationNo == reservationNo } shouldBe 1
+        }
+
+        scenario("비활성 리스팅과 SUSPENDED 채널은 팬아웃 대상에서 제외된다") {
+            val roomCode = "ROOM-FANOUT-4"
+            val roomId = savedRoomId(roomCode)
+            savedListing(roomId, savedOtaChannelId("OTA4_A"), "OTA4_A")
+            savedListing(roomId, savedOtaChannelId("OTA4_B"), "OTA4_B", status = RoomChannelListingStatus.INACTIVE)
+            savedListing(
+                roomId,
+                savedOtaChannelId("OTA4_C", status = OtaChannelStatus.SUSPENDED),
+                "OTA4_C",
+            )
+            val notificationKey = "NOTIFY-FANOUT-EXCLUDED"
+            val reservationNo = "OTA4_A:REF-FANOUT-EXCLUDED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CONFIRMED", platformId = "OTA4_A", roomCode = roomCode),
+                        ),
+                ).andExpect(status().isOk)
+
+            outboxEventRepository.findAll().count { it.reservationNo == reservationNo } shouldBe 1
+        }
+
+        listOf("CANCEL_REQUESTED", "RESERVATION_REJECTED").forEach { eventType ->
+            scenario("$eventType 는 재고 변화가 없으므로 팬아웃이 발생하지 않는다") {
+                val roomCode = "ROOM-FANOUT-NOFANOUT-$eventType"
+                val roomId = savedRoomId(roomCode)
+                listOf("A", "B").forEach { savedListing(roomId, savedOtaChannelId("OTA5_${eventType}_$it"), "OTA5_${eventType}_$it") }
+                val notificationKey = "NOTIFY-FANOUT-$eventType"
+                val reservationNo = "OTA5_${eventType}_A:REF-FANOUT-$eventType"
+
+                mockMvc
+                    .perform(
+                        post("/api/inbound-events")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(
+                                requestBody(notificationKey, reservationNo, eventType, platformId = "OTA5_${eventType}_A", roomCode = roomCode),
+                            ),
+                    ).andExpect(status().isOk)
+
+                outboxEventRepository.findAll().count { it.reservationNo == reservationNo } shouldBe 1
+            }
+        }
+
+        scenario("방을 찾을 수 없으면 팬아웃만 건너뛰고 원본 통보는 정상 저장된다") {
+            val notificationKey = "NOTIFY-FANOUT-NO-ROOM"
+            val reservationNo = "OTA_BOOKING:REF-FANOUT-NO-ROOM"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CONFIRMED", roomCode = "ROOM-DOES-NOT-EXIST"),
+                        ),
+                ).andExpect(status().isOk)
+
+            val savedOutboxEvent = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
+            savedOutboxEvent shouldHaveSize 1
+            savedOutboxEvent.first().eventType shouldBe "RESERVATION_CONFIRMED"
         }
     }
 })
