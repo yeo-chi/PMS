@@ -75,6 +75,18 @@ private data class ReservationChangedPayload(
     val newEndDate: LocalDate,
 )
 
+// BOOK이 겹침으로 거부된 경우 예약 row가 없어 reservationNo를 DB에서 읽을 수 없다. reservations.reservation_no는
+// platform_id + ':' + platform_reservation_ref로 생성되는 컬럼이라, 저장된 적 없는 예약이라도 저장됐더라면
+// 가졌을 값을 커맨드만으로 그대로 계산할 수 있다.
+private data class ReservationRejectedPayload(
+    val reservationNo: String,
+    val platformId: String,
+    val roomCode: String,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val rejectReason: String,
+)
+
 @Service
 class ReservationService(
     private val reservationRepository: ReservationRepository,
@@ -157,29 +169,38 @@ class ReservationService(
         command: BookReservationCommand,
         requestKey: String,
     ): ReservationRequest {
-        val conflictRequest =
-            ReservationRequest(
-                id = null,
-                requestKey = requestKey,
-                reservationId = null,
-                platformId = command.platformId,
-                action = ReservationRequestAction.BOOK,
-                initiatedBy = command.initiatedBy,
-                roomCode = command.roomCode,
-                oldDateRange = null,
-                newDateRange = command.dateRange,
-                resultStatus = RequestResultStatus.CONFLICT,
-                rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
-                requestedAt = OffsetDateTime.now(),
-            )
-
         // uq_request_key 위반으로 여기서 예외가 나면 트랜잭션(과 그 Hibernate 세션)은 이미 롤백된 상태다.
         // 같은 세션을 재사용해 재조회하면 "세션이 예외 이후에 flush됨" 문제로 이어지므로,
         // 예외를 트랜잭션 바깥으로 흘려보낸 뒤 별도 트랜잭션으로 재조회한다.
         return try {
             checkNotNull(
                 transactionTemplate.execute {
-                    reservationRequestRepository.saveAndFlush(conflictRequest.toEntity()).toDomain()
+                    val now = OffsetDateTime.now()
+                    val savedRequest =
+                        reservationRequestRepository.saveAndFlush(
+                            ReservationRequest(
+                                id = null,
+                                requestKey = requestKey,
+                                reservationId = null,
+                                platformId = command.platformId,
+                                action = ReservationRequestAction.BOOK,
+                                initiatedBy = command.initiatedBy,
+                                roomCode = command.roomCode,
+                                oldDateRange = null,
+                                newDateRange = command.dateRange,
+                                resultStatus = RequestResultStatus.CONFLICT,
+                                rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
+                                requestedAt = now,
+                            ).toEntity(),
+                        )
+
+                    // 패자 채널에도 거부 통보를 남긴다(기획문서 4.1). 예약 row가 없어 reservation_id는
+                    // null — reservationNo는 payload 안에 담아 발신 시 대체한다(아래 rejectedNotificationEntity).
+                    outboundNotificationRepository.saveAndFlush(
+                        rejectedNotificationEntity(command, savedRequest.id, now),
+                    )
+
+                    savedRequest.toDomain()
                 },
             ) { "충돌 기록 트랜잭션은 항상 값을 반환해야 합니다" }
         } catch (duplicateRequestKey: DataIntegrityViolationException) {
@@ -564,6 +585,40 @@ class ReservationService(
             reservationId = reservationId,
             requestId = requestId,
             eventType = RESERVATION_CONFIRMED_EVENT_TYPE,
+            payload = objectMapper.writeValueAsString(payload),
+            status = OutboundNotificationStatus.PENDING,
+            retryCount = 0,
+            nextRetryAt = now,
+            createdAt = now,
+            updatedAt = now,
+        ).toEntity()
+    }
+
+    private fun rejectedNotificationEntity(
+        command: BookReservationCommand,
+        requestId: Long,
+        now: OffsetDateTime,
+    ): OutboundNotificationEntity {
+        val reservationNo = "${command.platformId}:${command.platformReservationRef}"
+        val payload =
+            ReservationRejectedPayload(
+                reservationNo = reservationNo,
+                platformId = command.platformId,
+                roomCode = command.roomCode,
+                startDate = command.dateRange.startDate,
+                endDate = command.dateRange.endDate,
+                rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
+            )
+
+        // CHANGE의 거부 알림과 같은 이유로 requestId를 키에 포함한다. BOOK의 request_key가 이미
+        // platformReservationRef를 포함하므로(#14) 이론적으로는 reservationNo만으로도 유일하지만,
+        // 그 전제에 기대지 않고 CHANGE와 동일하게 안전한 패턴을 그대로 따른다.
+        return OutboundNotification(
+            id = null,
+            notificationKey = "$reservationNo:$RESERVATION_REJECTED_EVENT_TYPE:$requestId",
+            reservationId = null,
+            requestId = requestId,
+            eventType = RESERVATION_REJECTED_EVENT_TYPE,
             payload = objectMapper.writeValueAsString(payload),
             status = OutboundNotificationStatus.PENDING,
             retryCount = 0,

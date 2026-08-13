@@ -1,5 +1,6 @@
 package yeo.chi.proejct.pms.reservation.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
@@ -36,6 +37,7 @@ class ReservationServiceTest(
     @Autowired private val outboundNotificationRepository: OutboundNotificationRepository,
     @Autowired private val transactionTemplate: TransactionTemplate,
     @Autowired private val entityManager: EntityManager,
+    @Autowired private val objectMapper: ObjectMapper,
 ) : PostgresIntegrationTest({
 
     fun bookCommand(
@@ -128,14 +130,18 @@ class ReservationServiceTest(
             val startLatch = CountDownLatch(1)
             val executor = Executors.newFixedThreadPool(2)
 
-            val outcomes: List<ReservationRequest>
+            // 어느 쪽이 이기고 지는지 미리 알 수 없으므로, 각 결과를 그 결과를 만든 platformReservationRef와
+            // 짝지어 둔다(패자 채널의 RESERVATION_REJECTED payload가 그 ref로 계산된 reservationNo를
+            // 담고 있는지 검증하려면 필요).
+            val outcomes: List<Pair<String, ReservationRequest>>
             try {
                 val futures =
                     listOf("REF-CONCURRENT-A", "REF-CONCURRENT-B").map { platformReservationRef ->
-                        executor.submit<ReservationRequest> {
+                        executor.submit<Pair<String, ReservationRequest>> {
                             readyLatch.countDown()
                             startLatch.await()
-                            reservationService.book(bookCommand(platformReservationRef, roomCode, startDate, endDate))
+                            platformReservationRef to
+                                reservationService.book(bookCommand(platformReservationRef, roomCode, startDate, endDate))
                         }
                     }
                 readyLatch.await()
@@ -145,16 +151,26 @@ class ReservationServiceTest(
                 executor.shutdown()
             }
 
-            val successCount = outcomes.count { it.resultStatus == RequestResultStatus.SUCCESS }
-            val conflictCount = outcomes.count { it.resultStatus == RequestResultStatus.CONFLICT }
+            val successCount = outcomes.count { it.second.resultStatus == RequestResultStatus.SUCCESS }
+            val conflictCount = outcomes.count { it.second.resultStatus == RequestResultStatus.CONFLICT }
 
             successCount shouldBe 1
             conflictCount shouldBe 1
-            outcomes.first { it.resultStatus == RequestResultStatus.CONFLICT }.rejectReason shouldBe "DUPLICATE_BOOKING"
-            outcomes.first { it.resultStatus == RequestResultStatus.CONFLICT }.reservationId.shouldBeNull()
+            val (conflictRef, conflictOutcome) = outcomes.first { it.second.resultStatus == RequestResultStatus.CONFLICT }
+            conflictOutcome.rejectReason shouldBe "DUPLICATE_BOOKING"
+            conflictOutcome.reservationId.shouldBeNull()
 
-            val successReservationId = outcomes.first { it.resultStatus == RequestResultStatus.SUCCESS }.reservationId
+            val successReservationId = outcomes.first { it.second.resultStatus == RequestResultStatus.SUCCESS }.second.reservationId
             outboundNotificationRepository.findAll().count { it.reservationId == successReservationId } shouldBe 1
+
+            // 패자 채널에도 RESERVATION_REJECTED 통보가 정확히 1건 남아야 한다(#32) — 예약 row가 없어
+            // reservation_id는 null이고, reservationNo는 payload 안에서 읽는다.
+            val rejectedNotifications = outboundNotificationRepository.findAll().filter { it.requestId == conflictOutcome.id }
+            rejectedNotifications shouldHaveSize 1
+            val rejectedNotification = rejectedNotifications.first()
+            rejectedNotification.eventType shouldBe "RESERVATION_REJECTED"
+            rejectedNotification.reservationId.shouldBeNull()
+            objectMapper.readTree(rejectedNotification.payload).get("reservationNo").asText() shouldBe "OTA_BOOKING:$conflictRef"
         }
     }
 

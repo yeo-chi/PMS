@@ -1,5 +1,6 @@
 package yeo.chi.proejct.pms.reservation.service
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.collections.shouldNotContain
@@ -42,6 +43,7 @@ class OutboundNotificationDispatchWorkerTest(
     @Autowired private val reservationRepository: ReservationRepository,
     @Autowired private val transactionTemplate: TransactionTemplate,
     @Autowired private val properties: OutboundNotificationDispatchProperties,
+    @Autowired private val objectMapper: ObjectMapper,
 ) : PostgresIntegrationTest({
 
     // 이 스펙은 findBatchForDispatch가 이 스펙이 만든 row만 집어간다고 가정한다. 다른 @SpringBootTest
@@ -68,10 +70,11 @@ class OutboundNotificationDispatchWorkerTest(
     }
 
     fun savedNotificationId(
-        reservationId: Long,
+        reservationId: Long?,
         notificationKey: String,
         retryCount: Int = 0,
         nextRetryAt: OffsetDateTime = OffsetDateTime.now().minusSeconds(1),
+        payload: String = """{"reservationNo":"OTA_BOOKING:REF"}""",
     ): Long {
         val now = OffsetDateTime.now()
         return outboundNotificationRepository
@@ -82,7 +85,7 @@ class OutboundNotificationDispatchWorkerTest(
                     reservationId = reservationId,
                     requestId = null,
                     eventType = "RESERVATION_CONFIRMED",
-                    payload = """{"reservationNo":"OTA_BOOKING:REF"}""",
+                    payload = payload,
                     status = OutboundNotificationStatus.PENDING,
                     retryCount = retryCount,
                     nextRetryAt = nextRetryAt,
@@ -103,6 +106,7 @@ class OutboundNotificationDispatchWorkerTest(
                 transactionTemplate,
                 builder.build(),
                 properties,
+                objectMapper,
             )
         return worker to mockServer
     }
@@ -119,6 +123,27 @@ class OutboundNotificationDispatchWorkerTest(
                 .andExpect(jsonPath("$.notificationKey").value("NOTIFY-DISPATCH-1"))
                 .andExpect(jsonPath("$.eventType").value("RESERVATION_CONFIRMED"))
                 .andExpect(jsonPath("$.payload.reservationNo").value("OTA_BOOKING:REF"))
+                .andRespond(withSuccess())
+
+            worker.dispatchPendingNotifications()
+
+            mockServer.verify()
+            outboundNotificationRepository.findById(notificationId).orElseThrow().status shouldBe OutboundNotificationStatus.SENT
+        }
+
+        scenario("reservationId가 null(BOOK 겹침 거부)이어도 payload의 reservationNo로 발송에 성공한다") {
+            val notificationId =
+                savedNotificationId(
+                    reservationId = null,
+                    notificationKey = "NOTIFY-DISPATCH-REJECTED",
+                    payload = """{"reservationNo":"OTA_BOOKING:REF-REJECTED","roomCode":"ROOM-REJECTED"}""",
+                )
+            val (worker, mockServer) = newWorkerWithMockServer()
+
+            mockServer
+                .expect(requestTo("http://mock-operation/api/inbound-events"))
+                .andExpect(jsonPath("$.notificationKey").value("NOTIFY-DISPATCH-REJECTED"))
+                .andExpect(jsonPath("$.reservationNo").value("OTA_BOOKING:REF-REJECTED"))
                 .andRespond(withSuccess())
 
             worker.dispatchPendingNotifications()
@@ -215,6 +240,7 @@ class OutboundNotificationDispatchWorkerTest(
                     transactionTemplate,
                     builder.build(),
                     properties,
+                    objectMapper,
                 )
             mockServer
                 .expect(requestTo("http://mock-operation/api/inbound-events"))

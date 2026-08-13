@@ -23,7 +23,7 @@ class OutboundNotificationEntity(
     @Column(name = "notification_key")
     val notificationKey: String,
     @Column(name = "reservation_id")
-    val reservationId: Long,
+    val reservationId: Long?,
     @Column(name = "request_id")
     val requestId: Long?,
     @Column(name = "event_type")
