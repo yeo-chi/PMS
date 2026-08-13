@@ -381,7 +381,7 @@ class ReservationService(
     }
 
     fun cancelRequest(command: CancelRequestCommand): ReservationRequest {
-        val requestKey = buildCancelRequestKey(command.reservationId, OffsetDateTime.now())
+        val requestKey = buildCancelRequestKey(command.reservationId, command.externalRequestId, OffsetDateTime.now())
 
         reservationRequestRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()

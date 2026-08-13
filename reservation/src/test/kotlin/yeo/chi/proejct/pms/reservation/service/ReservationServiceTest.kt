@@ -330,17 +330,21 @@ class ReservationServiceTest(
             overlappingBookResult.resultStatus shouldBe RequestResultStatus.CONFLICT
         }
 
-        scenario("이미 PENDING_CANCEL인 예약에 재요청하면 재전이 없이 감사 기록만 추가된다") {
+        scenario("이미 PENDING_CANCEL인 예약에 (다른 externalRequestId로) 재요청하면 재전이 없이 감사 기록만 추가된다") {
             val bookResult =
                 reservationService.book(
                     bookCommand("REF-CANCEL-REQ-3", "ROOM-CANCEL-REQ-3", LocalDate.of(2028, 3, 1), LocalDate.of(2028, 3, 5)),
                 )
             val reservationId = requireNotNull(bookResult.reservationId)
-            reservationService.cancelRequest(CancelRequestCommand(reservationId, CancelRequestReason.OTHER))
+            reservationService.cancelRequest(
+                CancelRequestCommand(reservationId, CancelRequestReason.OTHER, externalRequestId = "EXT-CANCEL-REQ-3-A"),
+            )
             val versionAfterFirstRequest = reservationRepository.findById(reservationId).orElseThrow().version
 
             val secondResult =
-                reservationService.cancelRequest(CancelRequestCommand(reservationId, CancelRequestReason.OTHER))
+                reservationService.cancelRequest(
+                    CancelRequestCommand(reservationId, CancelRequestReason.OTHER, externalRequestId = "EXT-CANCEL-REQ-3-B"),
+                )
 
             secondResult.resultStatus shouldBe RequestResultStatus.SUCCESS
             val reservationAfterSecondRequest = reservationRepository.findById(reservationId).orElseThrow()
@@ -349,7 +353,26 @@ class ReservationServiceTest(
             outboundNotificationRepository.findAll().count {
                 it.reservationId == reservationId && it.eventType == "CANCEL_REQUESTED"
             } shouldBe 1
-            reservationRequestRepository.findAll().count { it.reservationId == reservationId } shouldBe 2
+            // BOOK 1건 + 서로 다른 externalRequestId를 가진 CANCEL_REQUEST 2건 = 총 3건.
+            reservationRequestRepository.findAll().count { it.reservationId == reservationId } shouldBe 3
+        }
+
+        scenario("같은 externalRequestId로 재요청하면 재처리 없이 이전 결과를 그대로 반환한다") {
+            val bookResult =
+                reservationService.book(
+                    bookCommand("REF-CANCEL-REQ-IDEMPOTENT", "ROOM-CANCEL-REQ-IDEMPOTENT", LocalDate.of(2028, 6, 1), LocalDate.of(2028, 6, 5)),
+                )
+            val reservationId = requireNotNull(bookResult.reservationId)
+            val command = CancelRequestCommand(reservationId, CancelRequestReason.OTHER, externalRequestId = "EXT-CANCEL-REQ-IDEMPOTENT")
+
+            val firstResult = reservationService.cancelRequest(command)
+            val secondResult = reservationService.cancelRequest(command)
+
+            secondResult.id shouldBe firstResult.id
+            outboundNotificationRepository.findAll().count {
+                it.reservationId == reservationId && it.eventType == "CANCEL_REQUESTED"
+            } shouldBe 1
+            reservationRequestRepository.findAll().count { it.requestKey == firstResult.requestKey } shouldBe 1
         }
 
         scenario("이미 CANCELLED인 예약에 취소요청하면 FAILED로 기록되고 알림을 남기지 않는다") {
