@@ -44,6 +44,14 @@ class OutboundNotificationDispatchWorkerTest(
     @Autowired private val properties: OutboundNotificationDispatchProperties,
 ) : PostgresIntegrationTest({
 
+    // 이 스펙은 findBatchForDispatch가 이 스펙이 만든 row만 집어간다고 가정한다. 다른 @SpringBootTest
+    // 클래스(예: ReservationControllerTest의 BOOK 흐름)가 같은 Postgres 컨테이너에 PENDING 알림을
+    // 남겨두면(트랜잭션 롤백 없이 공유되는 컨테이너라 자연스럽게 발생) 그 row까지 배치에 섞여 들어와
+    // 이 스펙의 mock 서버 기대와 어긋난다. 이 스펙 시작 시점에 한 번 정리해 격리를 보장한다.
+    beforeSpec {
+        outboundNotificationRepository.deleteAll()
+    }
+
     fun savedReservationId(platformReservationRef: String, roomCode: String): Long {
         val now = OffsetDateTime.now()
         return reservationRepository
