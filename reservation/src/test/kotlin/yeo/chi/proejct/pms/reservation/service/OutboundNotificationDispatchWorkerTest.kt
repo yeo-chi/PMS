@@ -4,6 +4,8 @@ import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe
+import io.mockk.every
+import io.mockk.mockk
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.HttpMethod
@@ -29,6 +31,7 @@ import yeo.chi.proejct.pms.reservation.persistent.toEntity
 import java.io.IOException
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.util.Optional
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -175,6 +178,52 @@ class OutboundNotificationDispatchWorkerTest(
             val (rePollWorker, _) = newWorkerWithMockServer()
             rePollWorker.dispatchPendingNotifications()
             outboundNotificationRepository.findById(notificationId).orElseThrow().status shouldBe OutboundNotificationStatus.DEAD
+        }
+    }
+
+    feature("배치 항목 단위 예외 격리") {
+        scenario("HTTP 호출 이전(예약 조회) 단계에서 예외가 나는 건이 섞여 있어도, 정상 건은 SENT로 커밋되고 실패 건만 재시도 상태로 남는다") {
+            val goodReservationId = savedReservationId("REF-DISPATCH-MIXED-GOOD", "ROOM-DISPATCH-MIXED-GOOD")
+            val goodReservationEntity = reservationRepository.findById(goodReservationId).orElseThrow()
+            val goodNotificationId = savedNotificationId(goodReservationId, "NOTIFY-DISPATCH-MIXED-GOOD")
+
+            // outbound_notifications.reservation_id는 실제 FK 제약이라 존재하지 않는 reservationId로는
+            // 애초에 저장 자체가 안 되고, reservation_no는 DB가 보장하는 NOT NULL 생성 컬럼이라
+            // requireNotNull도 실제 데이터로는 재현할 수 없다. 그래서 reservationRepository만 목으로
+            // 바꿔, "HTTP 호출과 무관한 RuntimeException"(예: 일시적 DB 커넥션 문제)을 흉내낸다.
+            val brokenReservationId = savedReservationId("REF-DISPATCH-MIXED-BROKEN", "ROOM-DISPATCH-MIXED-BROKEN")
+            val brokenNotificationId = savedNotificationId(brokenReservationId, "NOTIFY-DISPATCH-MIXED-BROKEN")
+            val flakyReservationRepository = mockk<ReservationRepository>()
+            every { flakyReservationRepository.findById(goodReservationId) } returns Optional.of(goodReservationEntity)
+            every { flakyReservationRepository.findById(brokenReservationId) } throws
+                RuntimeException("simulated transient failure")
+
+            val builder = RestClient.builder().baseUrl("http://mock-operation")
+            val mockServer = MockRestServiceServer.bindTo(builder).build()
+            val worker =
+                OutboundNotificationDispatchWorker(
+                    outboundNotificationRepository,
+                    flakyReservationRepository,
+                    transactionTemplate,
+                    builder.build(),
+                    properties,
+                )
+            mockServer
+                .expect(requestTo("http://mock-operation/api/inbound-events"))
+                .andExpect(jsonPath("$.notificationKey").value("NOTIFY-DISPATCH-MIXED-GOOD"))
+                .andRespond(withSuccess())
+
+            // 이 RuntimeException이 RestClientException으로만 잡히고 있었다면(수정 전 코드) 여기서
+            // 배치 트랜잭션 밖으로 그대로 전파돼 이미 처리된 goodNotification의 SENT 갱신까지
+            // 롤백시키고, 아래 호출 자체가 예외로 실패했을 것이다.
+            worker.dispatchPendingNotifications()
+
+            mockServer.verify()
+            outboundNotificationRepository.findById(goodNotificationId).orElseThrow().status shouldBe
+                OutboundNotificationStatus.SENT
+            val broken = outboundNotificationRepository.findById(brokenNotificationId).orElseThrow()
+            broken.status shouldBe OutboundNotificationStatus.FAILED
+            broken.retryCount shouldBe 1
         }
     }
 

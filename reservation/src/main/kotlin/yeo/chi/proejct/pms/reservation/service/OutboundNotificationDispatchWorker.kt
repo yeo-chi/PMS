@@ -5,7 +5,6 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.client.RestClient
-import org.springframework.web.client.RestClientException
 import yeo.chi.proejct.pms.reservation.configuration.OutboundNotificationDispatchProperties
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
 import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationEntity
@@ -34,8 +33,11 @@ class OutboundNotificationDispatchWorker(
         }
     }
 
-    // 한 건의 발송 실패가 배치의 나머지 건 처리를 막지 않도록(배치 트랜잭션 전체가 롤백되지 않도록)
-    // 여기서 예외를 잡는다.
+    // 한 건의 실패가 배치의 나머지 건 처리를 막지 않도록(배치 트랜잭션 전체가 롤백되지 않도록) 여기서
+    // 예외를 잡는다. HTTP 호출(RestClientException)뿐 아니라 그 이전 단계(예약 조회 실패,
+    // reservationNo 누락, payload 직렬화 등)에서 나는 예외도 같은 범위로 잡아야 한다 — 그렇지 않으면
+    // 이 배치 트랜잭션 전체가 롤백되어 이미 SENT로 갱신된 다른 건까지 되돌아가 중복 재전송된다
+    // (operation의 OutboxEventDispatchWorker.dispatchOne과 동일한 이유로 동일하게 넓힌다).
     private fun dispatchOne(notification: OutboundNotificationEntity) {
         try {
             val reservationNo =
@@ -58,8 +60,7 @@ class OutboundNotificationDispatchWorker(
                 .toBodilessEntity()
 
             notification.status = OutboundNotificationStatus.SENT
-        } catch (deliveryFailure: RestClientException) {
-            // 4xx/5xx/타임아웃/커넥션 실패를 전부 "발송 실패"로 취급한다 (모두 RestClientException으로 도달).
+        } catch (deliveryFailure: Exception) {
             notification.retryCount += 1
             notification.status =
                 if (notification.retryCount >= properties.maxRetryCount) {
