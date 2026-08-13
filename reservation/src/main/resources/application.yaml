@@ -1,6 +1,16 @@
 spring:
   application:
     name: reservation
+  datasource:
+    url: jdbc:postgresql://localhost:5432/reservation
+    username: reservation
+    password: reservation
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
 
 server:
   port: 8081

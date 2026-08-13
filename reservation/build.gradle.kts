@@ -23,11 +23,17 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-web")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
-	runtimeOnly("com.h2database:h2")
+	runtimeOnly("org.postgresql:postgresql")
+	implementation("org.flywaydb:flyway-core")
+	implementation("org.flywaydb:flyway-database-postgresql")
+	implementation("io.hypersistence:hypersistence-utils-hibernate-63:3.15.4")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test") {
 		exclude(module = "mockito-core")
 	}
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.testcontainers:postgresql")
 	testImplementation("io.kotest:kotest-runner-junit5:5.8.0")
 	testImplementation("io.kotest:kotest-assertions-core:5.8.0")
 	testImplementation("io.kotest.extensions:kotest-extensions-spring:1.1.3")
