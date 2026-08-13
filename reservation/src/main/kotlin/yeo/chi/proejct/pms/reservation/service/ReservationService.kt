@@ -1,6 +1,7 @@
 package yeo.chi.proejct.pms.reservation.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.stereotype.Service
@@ -474,8 +475,12 @@ class ReservationService(
         return savedRequest.toDomain()
     }
 
-    private fun reservationNotFoundResult(requestKey: String): ReservationRequest =
-        ReservationRequest(
+    private fun reservationNotFoundResult(requestKey: String): ReservationRequest {
+        // reservation_requests.platform_id는 NOT NULL이라 존재하지 않는 reservationId로 온
+        // 취소요청은 감사 로그 row를 남길 수 없다(reservationNotFoundResult 호출부 주석 참고).
+        // 아무 row도 남지 않아 추적이 안 되므로, 최소한 로그로는 흔적을 남긴다.
+        logger.warn("CANCEL_REQUEST 대상 예약을 찾을 수 없어 감사 로그 없이 처리됨: requestKey={}", requestKey)
+        return ReservationRequest(
             id = null,
             requestKey = requestKey,
             reservationId = null,
@@ -489,6 +494,7 @@ class ReservationService(
             rejectReason = RESERVATION_NOT_FOUND_REJECT_REASON,
             requestedAt = OffsetDateTime.now(),
         )
+    }
 
     private fun alreadyPendingCancelRequest(
         command: CancelRequestCommand,
@@ -871,5 +877,9 @@ class ReservationService(
             createdAt = now,
             updatedAt = now,
         ).toEntity()
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(ReservationService::class.java)
     }
 }
