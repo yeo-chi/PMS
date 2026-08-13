@@ -7,3 +7,12 @@ services:
       POSTGRES_PASSWORD: reservation
     ports:
       - "5432:5432"
+  operation-db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: operation
+      MYSQL_USER: operation
+      MYSQL_PASSWORD: operation
+      MYSQL_ROOT_PASSWORD: operation
+    ports:
+      - "3306:3306"
