@@ -2,4 +2,6 @@ package yeo.chi.proejct.pms.operation.persistent
 
 import org.springframework.data.jpa.repository.JpaRepository
 
-interface OtaChannelRepository : JpaRepository<OtaChannelEntity, Long>
+interface OtaChannelRepository : JpaRepository<OtaChannelEntity, Long> {
+    fun findByPlatformId(platformId: String): OtaChannelEntity?
+}
