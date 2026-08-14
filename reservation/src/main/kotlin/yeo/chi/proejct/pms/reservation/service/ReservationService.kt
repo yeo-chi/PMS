@@ -97,13 +97,7 @@ class ReservationService(
     }
 
     fun cancelConfirm(command: CancelConfirmCommand): ReservationLog {
-        val requestKey =
-            buildCancelConfirmRequestKey(
-                command.platformId,
-                command.platformReservationRef,
-                command.externalRequestId,
-                OffsetDateTime.now(),
-            )
+        val requestKey = command.buildCancelConfirmRequestKey(OffsetDateTime.now())
 
         reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
@@ -192,7 +186,7 @@ class ReservationService(
     }
 
     fun cancelRequest(command: CancelRequestCommand): ReservationLog {
-        val requestKey = buildCancelRequestKey(command.reservationId, command.externalRequestId, OffsetDateTime.now())
+        val requestKey = command.buildCancelRequestKey(OffsetDateTime.now())
 
         reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
@@ -343,13 +337,7 @@ class ReservationService(
             "HOST는 예약 변경(CHANGE)을 요청할 수 없습니다: initiatedBy=${command.initiatedBy}"
         }
 
-        val requestKey =
-            buildChangeRequestKey(
-                command.platformId,
-                command.platformReservationRef,
-                command.externalRequestId,
-                OffsetDateTime.now(),
-            )
+        val requestKey = command.buildChangeRequestKey(OffsetDateTime.now())
 
         reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
