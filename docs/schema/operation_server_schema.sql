@@ -73,7 +73,7 @@ CREATE TABLE rooms (
 
     -- 논리적 유니크 ID이자 애플리케이션이 실제로 사용하는 유일한 식별자.
     -- 호스트 내에서 방을 구분하는 코드를 조합한 전역 유니크 코드
-    -- 예: host_code + '-' + 호스트가 관리하는 방 고유 코드(room_local_code)
+    -- 예: host_id + '-' + 호스트가 관리하는 방 고유 코드(room_local_code)
     room_id               VARCHAR(80) NOT NULL,
 
     host_id                BIGINT NOT NULL,                     -- 내부 FK (조인용)
@@ -155,12 +155,14 @@ CREATE TABLE outbox_events (
     -- 통보 대상: OTA_CHANNEL 또는 HOST (대상 테이블이 둘로 갈리는 다형 참조라 단일 FK 대신 논리코드로 참조)
     target_type                   VARCHAR(20) NOT NULL
                          CHECK (target_type IN ('OTA_CHANNEL', 'HOST')),
-    target_code                    VARCHAR(64) NOT NULL,        -- ota_channels.platform_id 또는 hosts.host_code
+    target_code                    VARCHAR(64) NOT NULL,        -- ota_channels.platform_id 또는 hosts.host_id
 
     reservation_no                  VARCHAR(200) NOT NULL,      -- 예약 서버 쪽 reservation_no (문자열 보관, 교차 DB)
 
-    -- RESERVATION_CONFIRMED, RESERVATION_REJECTED, CANCEL_REQUESTED,
-    -- RESERVATION_CANCELLED, INVENTORY_REOPENED
+    -- 원 채널 대상: RESERVATION_CONFIRMED, RESERVATION_REJECTED, CANCEL_REQUESTED,
+    -- RESERVATION_CANCELLED, RESERVATION_CHANGED (그대로 전달)
+    -- 다른 채널 팬아웃 대상: INVENTORY_CLOSED, INVENTORY_REOPENED, INVENTORY_CHANGED
+    -- 호스트 대상: RESERVATION_CHANGED
     event_type                       VARCHAR(40) NOT NULL,
     payload                           JSON NOT NULL,
 

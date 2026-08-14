@@ -75,9 +75,11 @@ CREATE TABLE reservation_requests (
     id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
     -- 논리적 유니크 ID이자 멱등키.
-    -- BOOK: platform_id + ':' + product_code + ':' + start_date + ':' + end_date + ':BOOK'
-    -- CHANGE/CANCEL: platform_id + ':' + external_request_id (OTA가 요청 단위로 발급한 값이 있는 경우)
-    --                또는 reservation_no + ':' + action + ':' + 요청시각(초단위)
+    -- BOOK: platform_id + ':' + platform_reservation_ref + ':' + room_id + ':' + start_date + ':' + end_date + ':BOOK'
+    -- CANCEL_CONFIRM/CHANGE: external_request_id가 있으면 platform_id + ':' + external_request_id,
+    --                        없으면 platform_id + ':' + platform_reservation_ref + ':' + action + ':' + 요청시각(초단위)
+    -- CANCEL_REQUEST: external_request_id가 있으면 reservation_id + ':CANCEL_REQUEST:' + external_request_id,
+    --                 없으면 reservation_id + ':CANCEL_REQUEST:' + 요청시각(초단위)
     request_key                 VARCHAR(256) NOT NULL,
 
     -- 대상 예약 (BOOK 성공 시 채워짐). reservations.reservation_code(논리 유니크 ID, uq_reservation_code로
@@ -123,7 +125,9 @@ CREATE TABLE outbound_notifications (
     id                             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
     -- 논리적 유니크 ID이자 발송 멱등키.
-    -- 예: reservation_no + ':' + event_type (+ 재시도가 아닌 "새로운 사건" 구분이 필요하면 발생시각 초단위 추가)
+    -- BOOK 성공/CANCEL_CONFIRM/CANCEL_REQUEST: reservation_code + ':' + event_type
+    -- BOOK 거부(예약 row 없음)/CHANGE(같은 예약에 여러 번 성공/거부 가능): reservation_code(또는 계산된
+    --   reservation_no) + ':' + event_type + ':' + request_key — 이벤트 단위로 유일해야 하므로 요청 키를 덧붙인다.
     -- 운영 서버로 API 호출 시 이 값을 그대로 전달하여, 운영 서버도 동일한 값으로 수신 멱등성을 보장하게 한다.
     notification_key               VARCHAR(256) NOT NULL,
 
@@ -133,7 +137,8 @@ CREATE TABLE outbound_notifications (
     request_key                     VARCHAR(256) REFERENCES reservation_requests(request_key),
 
     -- RESERVATION_CONFIRMED, RESERVATION_REJECTED(중복예약 등으로 거부),
-    -- CANCEL_REQUESTED(호스트발 취소요청 전달), RESERVATION_CANCELLED(최종 취소 확정)
+    -- CANCEL_REQUESTED(호스트발 취소요청 전달), RESERVATION_CANCELLED(최종 취소 확정),
+    -- RESERVATION_CHANGED(예약 변경 확정)
     event_type                     VARCHAR(40) NOT NULL,
 
     payload                         JSONB NOT NULL,
