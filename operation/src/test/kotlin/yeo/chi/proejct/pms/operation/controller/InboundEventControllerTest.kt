@@ -21,14 +21,14 @@ import yeo.chi.proejct.pms.operation.domain.Room
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
 import yeo.chi.proejct.pms.operation.domain.RoomStatus
-import yeo.chi.proejct.pms.operation.persistent.HostRepository
-import yeo.chi.proejct.pms.operation.persistent.InboundEventRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.InboundEventRepository
 import yeo.chi.proejct.pms.operation.persistent.MySqlIntegrationTest
-import yeo.chi.proejct.pms.operation.persistent.OtaChannelRepository
-import yeo.chi.proejct.pms.operation.persistent.OutboxEventRepository
-import yeo.chi.proejct.pms.operation.persistent.RoomChannelListingRepository
-import yeo.chi.proejct.pms.operation.persistent.RoomRepository
-import yeo.chi.proejct.pms.operation.persistent.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomChannelListingRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomRepository
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -76,7 +76,7 @@ class InboundEventControllerTest(
                 .saveAndFlush(
                     Host(
                         id = null,
-                        hostCode = "HOST-$roomCode",
+                        hostId = "HOST-$roomCode",
                         name = "호스트 이름",
                         contactEmail = null,
                         contactPhone = null,
@@ -89,7 +89,7 @@ class InboundEventControllerTest(
             .saveAndFlush(
                 Room(
                     id = null,
-                    roomCode = roomCode,
+                    roomId = roomCode,
                     hostId = hostId,
                     name = "디럭스 룸",
                     address = null,

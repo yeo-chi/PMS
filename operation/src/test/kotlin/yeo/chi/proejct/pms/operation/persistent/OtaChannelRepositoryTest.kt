@@ -8,6 +8,8 @@ import org.springframework.dao.DataIntegrityViolationException
 import yeo.chi.proejct.pms.operation.domain.OtaChannel
 import yeo.chi.proejct.pms.operation.domain.OtaChannelIntegrationMode
 import yeo.chi.proejct.pms.operation.domain.OtaChannelStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

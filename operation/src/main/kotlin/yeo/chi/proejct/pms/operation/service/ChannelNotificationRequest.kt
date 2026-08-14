@@ -1,6 +1,7 @@
 package yeo.chi.proejct.pms.operation.service
 
 import com.fasterxml.jackson.annotation.JsonRawValue
+import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
 
 // reservation의 InboundEventRequest(#18)와 같은 이유로 payload를 raw로 보낸다: 이미 직렬화된
 // JSON 문자열이므로 @JsonRawValue 없이 평범한 String으로 두면 이중 이스케이프된다.
@@ -10,4 +11,13 @@ data class ChannelNotificationRequest(
     val eventType: String,
     @get:JsonRawValue
     val payload: String,
-)
+) {
+    companion object {
+        fun from(event: OutboxEventEntity) = ChannelNotificationRequest(
+            outboxKey = event.outboxKey,
+            reservationNo = event.outboxKey,
+            eventType = event.eventType,
+            payload = event.payload,
+        )
+    }
+}

@@ -1,13 +1,6 @@
-package yeo.chi.proejct.pms.operation.persistent
+package yeo.chi.proejct.pms.operation.persistent.entity
 
-import jakarta.persistence.Column
-import jakarta.persistence.Entity
-import jakarta.persistence.EnumType
-import jakarta.persistence.Enumerated
-import jakarta.persistence.GeneratedValue
-import jakarta.persistence.GenerationType
-import jakarta.persistence.Id
-import jakarta.persistence.Table
+import jakarta.persistence.*
 import org.hibernate.annotations.Generated
 import org.hibernate.generator.EventType
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
@@ -19,12 +12,12 @@ import java.time.LocalDateTime
 class RoomChannelListingEntity(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    val id: Long,
+    val id: Long = 0,
     @Column(name = "listing_key", insertable = false, updatable = false)
     @Generated(event = [EventType.INSERT])
     val listingKey: String?,
     @Column(name = "room_id")
-    val roomId: Long,
+    val roomId: String,
     @Column(name = "ota_channel_id")
     val otaChannelId: Long,
     @Column(name = "platform_id")
@@ -40,30 +33,26 @@ class RoomChannelListingEntity(
     @Column(name = "updated_at", insertable = false, updatable = false)
     @Generated(event = [EventType.INSERT, EventType.UPDATE])
     val updatedAt: LocalDateTime?,
-)
+) {
+    companion object {
+        fun from(roomChannelListing: RoomChannelListing) = RoomChannelListingEntity(
+            listingKey = roomChannelListing.listingKey,
+            roomId = roomChannelListing.roomId,
+            otaChannelId = roomChannelListing.otaChannelId,
+            platformId = roomChannelListing.platformId,
+            externalProductId = roomChannelListing.externalProductId,
+            status = roomChannelListing.status,
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+    }
 
-fun RoomChannelListingEntity.toDomain(): RoomChannelListing =
-    RoomChannelListing(
-        id = id,
+    fun toDomain() = RoomChannelListing(
         listingKey = listingKey,
         roomId = roomId,
         otaChannelId = otaChannelId,
         platformId = platformId,
         externalProductId = externalProductId,
         status = status,
-        createdAt = createdAt,
-        updatedAt = updatedAt,
     )
-
-fun RoomChannelListing.toEntity(): RoomChannelListingEntity =
-    RoomChannelListingEntity(
-        id = id ?: 0,
-        listingKey = listingKey,
-        roomId = roomId,
-        otaChannelId = otaChannelId,
-        platformId = platformId,
-        externalProductId = externalProductId,
-        status = status,
-        createdAt = createdAt,
-        updatedAt = updatedAt,
-    )
+}

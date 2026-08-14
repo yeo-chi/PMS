@@ -8,6 +8,9 @@ import yeo.chi.proejct.pms.operation.domain.Host
 import yeo.chi.proejct.pms.operation.domain.HostStatus
 import yeo.chi.proejct.pms.operation.domain.Room
 import yeo.chi.proejct.pms.operation.domain.RoomStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomRepository
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -21,7 +24,7 @@ class RoomRepositoryTest(
             .saveAndFlush(
                 Host(
                     id = null,
-                    hostCode = "HOST-ROOM-TEST",
+                    hostId = "HOST-ROOM-TEST",
                     name = "호스트 이름",
                     contactEmail = null,
                     contactPhone = null,
@@ -37,7 +40,7 @@ class RoomRepositoryTest(
     ): Room =
         Room(
             id = null,
-            roomCode = roomCode,
+            roomId = roomCode,
             hostId = hostId,
             name = "디럭스 룸",
             address = "서울시 어딘가",

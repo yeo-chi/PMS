@@ -9,10 +9,10 @@ import org.springframework.web.client.RestClient
 import yeo.chi.proejct.pms.operation.configuration.OutboxEventDispatchProperties
 import yeo.chi.proejct.pms.operation.domain.OutboxEventStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxTargetType
-import yeo.chi.proejct.pms.operation.persistent.HostRepository
-import yeo.chi.proejct.pms.operation.persistent.OtaChannelRepository
-import yeo.chi.proejct.pms.operation.persistent.OutboxEventEntity
-import yeo.chi.proejct.pms.operation.persistent.OutboxEventRepository
+import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
 import java.time.LocalDateTime
 
 @Service
@@ -24,7 +24,6 @@ class OutboxEventDispatchWorker(
     private val channelDeliveryRestClient: RestClient,
     private val properties: OutboxEventDispatchProperties,
 ) {
-
     // SELECT ... FOR UPDATE SKIP LOCKED로 얻은 락은 이 트랜잭션이 끝나야 풀린다(reservation #18과
     // 동일한 이유) — "배치 조회 + 각 건 발송 + 상태 갱신"을 하나의 트랜잭션으로 묶는다.
     @Scheduled(fixedDelayString = "\${outbox-event.poll-interval-millis}")
@@ -46,7 +45,7 @@ class OutboxEventDispatchWorker(
                 }
             check(delivered) { "채널 설정을 찾을 수 없어 전달하지 못했습니다: targetCode=${event.targetCode}" }
             event.status = OutboxEventStatus.SENT
-        } catch (deliveryFailure: Exception) {
+        } catch (_: Exception) {
             // 실제 HTTP 실패(RestClientException)와 "채널/콜백 URL 설정 없음"(check 실패)을 같은
             // 재시도 경로로 합친다 — 둘 다 "지금은 전달 못 했다"는 점에서 동일하게 취급해도 무방하다
             // (plan/21.md 5번 결정 사항: 실패 원인을 세분화하지 않는다).
@@ -57,7 +56,7 @@ class OutboxEventDispatchWorker(
                 } else {
                     OutboxEventStatus.FAILED
                 }
-            event.nextRetryAt = computeNextRetryAt(event.retryCount, properties)
+            event.nextRetryAt = calculateNextRetryAt(event.retryCount, properties)
         }
         outboxEventRepository.saveAndFlush(event)
     }
@@ -71,9 +70,10 @@ class OutboxEventDispatchWorker(
             // 채널마다 콜백 URL이 다르므로(고정 baseUrl 없음) 절대 URI를 그대로 지정한다.
             .uri(callbackBaseUrl)
             .contentType(MediaType.APPLICATION_JSON)
-            .body(ChannelNotificationRequest(event.outboxKey, event.reservationNo, event.eventType, event.payload))
+            .body(ChannelNotificationRequest.from(event))
             .retrieve()
             .toBodilessEntity()
+
         return true
     }
 
@@ -97,11 +97,12 @@ class OutboxEventDispatchWorker(
     }
 }
 
-private fun computeNextRetryAt(
+private fun calculateNextRetryAt(
     retryCount: Int,
     properties: OutboxEventDispatchProperties,
 ): LocalDateTime {
     val backoffSeconds =
         minOf(properties.maxBackoffSeconds, properties.initialBackoffSeconds * (1L shl (retryCount - 1)))
+
     return LocalDateTime.now().plusSeconds(backoffSeconds)
 }

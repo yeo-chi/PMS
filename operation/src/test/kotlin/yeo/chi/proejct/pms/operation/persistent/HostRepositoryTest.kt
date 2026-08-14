@@ -10,6 +10,8 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.dao.DataIntegrityViolationException
 import yeo.chi.proejct.pms.operation.domain.Host
 import yeo.chi.proejct.pms.operation.domain.HostStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -21,7 +23,7 @@ class HostRepositoryTest(
     fun newHost(hostCode: String): Host =
         Host(
             id = null,
-            hostCode = hostCode,
+            hostId = hostCode,
             name = "호스트 이름",
             contactEmail = "host@example.com",
             contactPhone = "010-0000-0000",

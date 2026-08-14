@@ -6,6 +6,8 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.dao.DataIntegrityViolationException
 import yeo.chi.proejct.pms.operation.domain.InboundEvent
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.InboundEventRepository
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

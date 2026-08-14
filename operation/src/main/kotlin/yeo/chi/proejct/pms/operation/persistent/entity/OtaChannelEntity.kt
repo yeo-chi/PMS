@@ -1,4 +1,4 @@
-package yeo.chi.proejct.pms.operation.persistent
+package yeo.chi.proejct.pms.operation.persistent.entity
 
 import jakarta.persistence.Column
 import jakarta.persistence.Entity

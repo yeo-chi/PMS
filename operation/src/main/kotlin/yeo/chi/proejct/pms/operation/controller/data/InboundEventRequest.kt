@@ -1,7 +1,9 @@
-package yeo.chi.proejct.pms.operation.controller
+package yeo.chi.proejct.pms.operation.controller.data
 
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.validation.constraints.NotBlank
+import yeo.chi.proejct.pms.operation.domain.InboundEvent
 
 // reservation 쪽 InboundEventRequest(service/InboundEventRequest.kt)와 이름은 같지만 서로 다른
 // 모듈이라(Gradle 컴파일 의존성 없음) 무방하다. payload는 발신 측이 @JsonRawValue로 이스케이프
@@ -11,4 +13,12 @@ data class InboundEventRequest(
     @field:NotBlank val reservationNo: String,
     @field:NotBlank val eventType: String,
     val payload: JsonNode,
-)
+) {
+    fun toDomain(objectMapper: ObjectMapper) = InboundEvent(
+        notificationKey = notificationKey,
+        reservationNo = reservationNo,
+        eventType = eventType,
+        payload = objectMapper.writeValueAsString(payload),
+        receivedAt = null,
+    )
+}

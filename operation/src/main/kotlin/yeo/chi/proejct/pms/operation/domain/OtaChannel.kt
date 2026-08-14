@@ -14,3 +14,13 @@ data class OtaChannel(
     val createdAt: LocalDateTime?,
     val updatedAt: LocalDateTime?,
 )
+
+enum class OtaChannelIntegrationMode {
+    SYNC,
+    ASYNC,
+}
+
+enum class OtaChannelStatus {
+    ACTIVE,
+    SUSPENDED,
+}

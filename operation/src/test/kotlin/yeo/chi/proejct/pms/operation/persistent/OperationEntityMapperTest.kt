@@ -15,6 +15,8 @@ import yeo.chi.proejct.pms.operation.domain.Room
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
 import yeo.chi.proejct.pms.operation.domain.RoomStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.toDomain
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import java.time.LocalDateTime
 
 class OperationEntityMapperTest : FeatureSpec({
@@ -25,7 +27,7 @@ class OperationEntityMapperTest : FeatureSpec({
             val host =
                 Host(
                     id = 1L,
-                    hostCode = "HOST-1",
+                    hostId = "HOST-1",
                     name = "호스트 이름",
                     contactEmail = "host@example.com",
                     contactPhone = "010-0000-0000",
@@ -62,7 +64,7 @@ class OperationEntityMapperTest : FeatureSpec({
             val room =
                 Room(
                     id = 1L,
-                    roomCode = "HOST-1-ROOM-101",
+                    roomId = "HOST-1-ROOM-101",
                     hostId = 1L,
                     name = "디럭스 룸",
                     address = "서울시 어딘가",

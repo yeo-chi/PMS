@@ -1,10 +1,13 @@
-package yeo.chi.proejct.pms.operation.persistent
+package yeo.chi.proejct.pms.operation.persistent.repository
 
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import org.springframework.stereotype.Repository
+import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
 import java.time.LocalDateTime
 
+@Repository
 interface OutboxEventRepository : JpaRepository<OutboxEventEntity, Long> {
     fun findByOutboxKey(outboxKey: String): OutboxEventEntity?
 

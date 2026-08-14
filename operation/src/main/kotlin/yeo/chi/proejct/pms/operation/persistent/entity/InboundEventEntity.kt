@@ -1,11 +1,6 @@
-package yeo.chi.proejct.pms.operation.persistent
+package yeo.chi.proejct.pms.operation.persistent.entity
 
-import jakarta.persistence.Column
-import jakarta.persistence.Entity
-import jakarta.persistence.GeneratedValue
-import jakarta.persistence.GenerationType
-import jakarta.persistence.Id
-import jakarta.persistence.Table
+import jakarta.persistence.*
 import org.hibernate.annotations.Generated
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.generator.EventType
@@ -28,7 +23,6 @@ class InboundEventEntity(
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", columnDefinition = "json")
     val payload: String,
-    // append-only 테이블이라 ON UPDATE가 없다 — INSERT 시점에만 재조회한다.
     @Column(name = "received_at", insertable = false, updatable = false)
     @Generated(event = [EventType.INSERT])
     val receivedAt: LocalDateTime?,

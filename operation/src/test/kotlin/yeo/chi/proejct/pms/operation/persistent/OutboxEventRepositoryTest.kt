@@ -8,6 +8,8 @@ import org.springframework.dao.DataIntegrityViolationException
 import yeo.chi.proejct.pms.operation.domain.OutboxEvent
 import yeo.chi.proejct.pms.operation.domain.OutboxEventStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxTargetType
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
 import java.time.LocalDateTime
 
 @DataJpaTest

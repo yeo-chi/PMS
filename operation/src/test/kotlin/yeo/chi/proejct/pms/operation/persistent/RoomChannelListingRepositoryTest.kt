@@ -14,6 +14,11 @@ import yeo.chi.proejct.pms.operation.domain.Room
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
 import yeo.chi.proejct.pms.operation.domain.RoomStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomChannelListingRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomRepository
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -30,7 +35,7 @@ class RoomChannelListingRepositoryTest(
                 .saveAndFlush(
                     Host(
                         id = null,
-                        hostCode = "HOST-LISTING-$roomCode",
+                        hostId = "HOST-LISTING-$roomCode",
                         name = "호스트 이름",
                         contactEmail = null,
                         contactPhone = null,
@@ -43,7 +48,7 @@ class RoomChannelListingRepositoryTest(
             .saveAndFlush(
                 Room(
                     id = null,
-                    roomCode = roomCode,
+                    roomId = roomCode,
                     hostId = hostId,
                     name = "디럭스 룸",
                     address = null,

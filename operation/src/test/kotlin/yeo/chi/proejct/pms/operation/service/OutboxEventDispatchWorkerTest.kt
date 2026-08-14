@@ -26,11 +26,11 @@ import yeo.chi.proejct.pms.operation.domain.OtaChannelStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxEvent
 import yeo.chi.proejct.pms.operation.domain.OutboxEventStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxTargetType
-import yeo.chi.proejct.pms.operation.persistent.HostRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
 import yeo.chi.proejct.pms.operation.persistent.MySqlIntegrationTest
-import yeo.chi.proejct.pms.operation.persistent.OtaChannelRepository
-import yeo.chi.proejct.pms.operation.persistent.OutboxEventRepository
-import yeo.chi.proejct.pms.operation.persistent.toEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
+import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import java.io.IOException
 import java.time.LocalDateTime
 import java.util.concurrent.CountDownLatch
@@ -78,7 +78,7 @@ class OutboxEventDispatchWorkerTest(
         hostRepository.saveAndFlush(
             Host(
                 id = null,
-                hostCode = hostCode,
+                hostId = hostCode,
                 name = "호스트 이름",
                 contactEmail = null,
                 contactPhone = null,
