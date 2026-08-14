@@ -59,7 +59,7 @@ class OutboundNotificationDispatchWorker(
                 .toBodilessEntity()
 
             notification.status = OutboundNotificationStatus.SENT
-        } catch (deliveryFailure: Exception) {
+        } catch (_: Exception) {
             notification.retryCount += 1
             notification.status =
                 if (notification.retryCount >= properties.maxRetryCount) {
@@ -85,7 +85,7 @@ class OutboundNotificationDispatchWorker(
             val payloadNode = objectMapper.readTree(notification.payload)
             requireNotNull(payloadNode.get("reservationNo")?.asText()) {
                 "reservationId가 없는 알림은 payload에 reservationNo가 있어야 합니다: " +
-                    "notificationKey=${notification.notificationKey}"
+                        "notificationKey=${notification.notificationKey}"
             }
         }
     }

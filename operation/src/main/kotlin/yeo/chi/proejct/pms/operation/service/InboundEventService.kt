@@ -8,7 +8,6 @@ import org.springframework.transaction.support.TransactionTemplate
 import yeo.chi.proejct.pms.operation.controller.data.InboundEventRequest
 import yeo.chi.proejct.pms.operation.domain.InboundEvent
 import yeo.chi.proejct.pms.operation.domain.OtaChannelStatus
-import yeo.chi.proejct.pms.operation.domain.OutboxEvent
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
 import yeo.chi.proejct.pms.operation.persistent.entity.InboundEventEntity
 import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
@@ -68,7 +67,7 @@ class InboundEventService(
                     "payload에 platformId가 없습니다: notificationKey=${request.notificationKey}"
                 }
 
-            outboxEventRepository.saveAndFlush(OutboxEventEntity.from(OutboxEvent.of(inboundEvent, platformId)))
+            outboxEventRepository.saveAndFlush(OutboxEventEntity.primary(inboundEvent, platformId))
 
             FAN_OUT_EVENT_TYPE_BY_SOURCE[request.eventType]?.let { fanOutEventType ->
                 fanOutToOtherChannels(inboundEvent, payloadJson, platformId, fanOutEventType)
@@ -102,9 +101,7 @@ class InboundEventService(
             // OtaChannelRepository.findByPlatformId를 재사용, 새 조회 메서드 불필요).
             .filter { listing -> otaChannelRepository.findByPlatformId(listing.platformId)?.status == OtaChannelStatus.ACTIVE }
             .forEach { listing ->
-                outboxEventRepository.saveAndFlush(
-                    OutboxEventEntity.from(OutboxEvent.ofB(inboundEvent, listing, fanOutEventType)),
-                )
+                outboxEventRepository.saveAndFlush(OutboxEventEntity.fanOut(inboundEvent, listing, fanOutEventType))
             }
     }
 
@@ -127,9 +124,7 @@ class InboundEventService(
         val room = roomRepository.findByRoomId(roomCode) ?: return
         val host = hostRepository.findById(room.hostId).orElse(null) ?: return
 
-        outboxEventRepository.saveAndFlush(
-            OutboxEventEntity.from(OutboxEvent.ofHost(inboundEvent, host.hostId, inboundEvent.eventType)),
-        )
+        outboxEventRepository.saveAndFlush(OutboxEventEntity.host(inboundEvent, host.hostId, inboundEvent.eventType))
     }
 
     companion object {

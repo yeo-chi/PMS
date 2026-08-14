@@ -12,9 +12,11 @@ import org.hibernate.annotations.Generated
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.generator.EventType
 import org.hibernate.type.SqlTypes
+import yeo.chi.proejct.pms.operation.domain.InboundEvent
 import yeo.chi.proejct.pms.operation.domain.OutboxEvent
 import yeo.chi.proejct.pms.operation.domain.OutboxEventStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxTargetType
+import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
 import java.time.LocalDateTime
 
 @Entity
@@ -66,6 +68,26 @@ class OutboxEventEntity(
                 createdAt = LocalDateTime.now(),
                 updatedAt = LocalDateTime.now(),
             )
+
+        // 예약을 소유한 원 채널 대상 (inbound event 1건당 항상 1건).
+        fun primary(
+            inboundEvent: InboundEvent,
+            platformId: String,
+        ): OutboxEventEntity = from(OutboxEvent.of(inboundEvent, platformId))
+
+        // 같은 방을 노출 중인 다른 활성 채널로의 팬아웃 대상.
+        fun fanOut(
+            inboundEvent: InboundEvent,
+            listing: RoomChannelListing,
+            eventType: String,
+        ): OutboxEventEntity = from(OutboxEvent.ofB(inboundEvent, listing, eventType))
+
+        // 방을 소유한 호스트 대상.
+        fun host(
+            inboundEvent: InboundEvent,
+            hostId: String,
+            eventType: String,
+        ): OutboxEventEntity = from(OutboxEvent.ofHost(inboundEvent, hostId, eventType))
     }
 
     fun toDomain() =
