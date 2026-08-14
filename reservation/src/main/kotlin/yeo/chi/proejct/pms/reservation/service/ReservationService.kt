@@ -60,7 +60,9 @@ class ReservationService(
                         ReservationLogEntity.from(ReservationLog.booked(requestKey, reservation, command.initiatedBy)),
                     )
 
-                outboundNotificationRepository.saveAndFlush(confirmedNotificationEntity(requestKey, reservation))
+                outboundNotificationRepository.saveAndFlush(
+                    OutboundNotificationEntity.confirmed(requestKey, reservation, objectMapper),
+                )
 
                 savedRequest.toDomain()
             },
@@ -84,7 +86,9 @@ class ReservationService(
 
                     // 패자 채널에도 거부 통보를 남긴다(기획문서 4.1). 예약 row가 없어 reservation_code는
                     // null — reservationNo는 payload 안에 담아 발신 시 대체한다.
-                    outboundNotificationRepository.saveAndFlush(rejectedNotificationEntity(command, requestKey, now))
+                    outboundNotificationRepository.saveAndFlush(
+                        OutboundNotificationEntity.rejected(requestKey, command, now, objectMapper),
+                    )
 
                     savedRequest.toDomain()
                 },
@@ -180,7 +184,9 @@ class ReservationService(
                 ReservationLogEntity.from(ReservationLog.cancelConfirmed(requestKey, savedReservation, now)),
             )
 
-        outboundNotificationRepository.saveAndFlush(cancelledNotificationEntity(requestKey, savedReservation, now))
+        outboundNotificationRepository.saveAndFlush(
+            OutboundNotificationEntity.cancelled(requestKey, savedReservation, now, objectMapper),
+        )
 
         return savedRequest.toDomain()
     }
@@ -276,61 +282,11 @@ class ReservationService(
             )
 
         outboundNotificationRepository.saveAndFlush(
-            cancelRequestedNotificationEntity(requestKey, savedReservation, command.reason, now),
+            OutboundNotificationEntity.cancelRequested(requestKey, savedReservation, command.reason, now, objectMapper),
         )
 
         return savedRequest.toDomain()
     }
-
-    private fun confirmedNotificationEntity(
-        requestKey: String,
-        reservation: Reservation,
-    ): OutboundNotificationEntity =
-        OutboundNotificationEntity.from(OutboundNotification.from(requestKey, reservation, objectMapper))
-
-    private fun rejectedNotificationEntity(
-        command: BookReservationCommand,
-        requestKey: String,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity =
-        OutboundNotificationEntity.from(OutboundNotification.rejected(requestKey, command, now, objectMapper))
-
-    private fun cancelledNotificationEntity(
-        requestKey: String,
-        reservation: Reservation,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity =
-        OutboundNotificationEntity.from(OutboundNotification.cancelled(requestKey, reservation, now, objectMapper))
-
-    private fun cancelRequestedNotificationEntity(
-        requestKey: String,
-        reservation: Reservation,
-        reason: CancelRequestReason,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity =
-        OutboundNotificationEntity.from(
-            OutboundNotification.cancelRequested(requestKey, reservation, reason, now, objectMapper),
-        )
-
-    private fun changedNotificationEntity(
-        requestKey: String,
-        reservation: Reservation,
-        newDateRange: ReservationDateRange,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity =
-        OutboundNotificationEntity.from(
-            OutboundNotification.changed(requestKey, reservation, newDateRange, now, objectMapper),
-        )
-
-    private fun changeRejectedNotificationEntity(
-        requestKey: String,
-        reservation: Reservation,
-        newDateRange: ReservationDateRange,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity =
-        OutboundNotificationEntity.from(
-            OutboundNotification.changeRejected(requestKey, reservation, newDateRange, now, objectMapper),
-        )
 
     fun change(command: ChangeReservationCommand): ReservationLog {
         require(command.initiatedBy != RequestInitiator.HOST) {
@@ -415,7 +371,7 @@ class ReservationService(
             )
 
         outboundNotificationRepository.saveAndFlush(
-            changedNotificationEntity(requestKey, originalReservation, command.newDateRange, now),
+            OutboundNotificationEntity.changed(requestKey, originalReservation, command.newDateRange, now, objectMapper),
         )
 
         return savedRequest.toDomain()
@@ -452,7 +408,13 @@ class ReservationService(
                         )
 
                     outboundNotificationRepository.saveAndFlush(
-                        changeRejectedNotificationEntity(requestKey, reservation, command.newDateRange, now),
+                        OutboundNotificationEntity.changeRejected(
+                            requestKey,
+                            reservation,
+                            command.newDateRange,
+                            now,
+                            objectMapper,
+                        ),
                     )
 
                     rejectedRequest.toDomain()

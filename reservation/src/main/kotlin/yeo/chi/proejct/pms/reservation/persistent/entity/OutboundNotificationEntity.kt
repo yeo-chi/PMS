@@ -1,10 +1,15 @@
 package yeo.chi.proejct.pms.reservation.persistent.entity
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.persistence.*
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
+import yeo.chi.proejct.pms.reservation.domain.BookReservationCommand
+import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotification
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
+import yeo.chi.proejct.pms.reservation.domain.Reservation
+import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import java.time.OffsetDateTime
 
 @Entity
@@ -52,6 +57,53 @@ class OutboundNotificationEntity(
                 updatedAt = now,
             )
         }
+
+        fun confirmed(
+            requestKey: String,
+            reservation: Reservation,
+            objectMapper: ObjectMapper,
+        ): OutboundNotificationEntity = from(OutboundNotification.from(requestKey, reservation, objectMapper))
+
+        fun rejected(
+            requestKey: String,
+            command: BookReservationCommand,
+            now: OffsetDateTime,
+            objectMapper: ObjectMapper,
+        ): OutboundNotificationEntity = from(OutboundNotification.rejected(requestKey, command, now, objectMapper))
+
+        fun cancelled(
+            requestKey: String,
+            reservation: Reservation,
+            now: OffsetDateTime,
+            objectMapper: ObjectMapper,
+        ): OutboundNotificationEntity = from(OutboundNotification.cancelled(requestKey, reservation, now, objectMapper))
+
+        fun cancelRequested(
+            requestKey: String,
+            reservation: Reservation,
+            reason: CancelRequestReason,
+            now: OffsetDateTime,
+            objectMapper: ObjectMapper,
+        ): OutboundNotificationEntity =
+            from(OutboundNotification.cancelRequested(requestKey, reservation, reason, now, objectMapper))
+
+        fun changed(
+            requestKey: String,
+            reservation: Reservation,
+            newDateRange: ReservationDateRange,
+            now: OffsetDateTime,
+            objectMapper: ObjectMapper,
+        ): OutboundNotificationEntity =
+            from(OutboundNotification.changed(requestKey, reservation, newDateRange, now, objectMapper))
+
+        fun changeRejected(
+            requestKey: String,
+            reservation: Reservation,
+            newDateRange: ReservationDateRange,
+            now: OffsetDateTime,
+            objectMapper: ObjectMapper,
+        ): OutboundNotificationEntity =
+            from(OutboundNotification.changeRejected(requestKey, reservation, newDateRange, now, objectMapper))
     }
 
     fun toDomain() =
