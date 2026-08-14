@@ -142,7 +142,13 @@ class InboundEventControllerTest(
     }
 
     feature("신규 수신 성공") {
-        listOf("RESERVATION_CONFIRMED", "RESERVATION_REJECTED", "CANCEL_REQUESTED", "RESERVATION_CANCELLED").forEach { eventType ->
+        listOf(
+            "RESERVATION_CONFIRMED",
+            "RESERVATION_REJECTED",
+            "CANCEL_REQUESTED",
+            "RESERVATION_CANCELLED",
+            "RESERVATION_CHANGED",
+        ).forEach { eventType ->
             scenario("$eventType 수신 시 inbound_events/outbox_events에 각각 1건씩 저장된다") {
                 val notificationKey = "NOTIFY-$eventType"
                 val reservationNo = "OTA_BOOKING:REF-$eventType"
@@ -317,6 +323,27 @@ class InboundEventControllerTest(
             outboxEvents.count { it.targetCode == "OTA2_C" && it.eventType == "INVENTORY_REOPENED" } shouldBe 1
         }
 
+        scenario("예약 변경 이벤트는 다른 채널에 INVENTORY_CHANGED로 팬아웃된다") {
+            val roomCode = "ROOM-FANOUT-3-CHANGED"
+            val roomId = savedRoomId(roomCode)
+            listOf("A", "B", "C").forEach { savedListing(roomId, savedOtaChannelId("OTA3_$it"), "OTA3_$it") }
+            val notificationKey = "NOTIFY-FANOUT-CHANGED"
+            val reservationNo = "OTA3_A:REF-FANOUT-CHANGED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CHANGED", platformId = "OTA3_A", roomCode = roomCode),
+                        ),
+                ).andExpect(status().isOk)
+
+            val outboxEvents = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
+            outboxEvents.count { it.targetCode == "OTA3_B" && it.eventType == "INVENTORY_CHANGED" } shouldBe 1
+            outboxEvents.count { it.targetCode == "OTA3_C" && it.eventType == "INVENTORY_CHANGED" } shouldBe 1
+        }
+
         scenario("노출 채널이 자기 자신뿐이면 팬아웃이 발생하지 않는다") {
             val roomCode = "ROOM-FANOUT-3"
             val roomId = savedRoomId(roomCode)
@@ -398,6 +425,68 @@ class InboundEventControllerTest(
             val savedOutboxEvent = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
             savedOutboxEvent shouldHaveSize 1
             savedOutboxEvent.first().eventType shouldBe "RESERVATION_CONFIRMED"
+        }
+    }
+
+    feature("호스트 통보") {
+        scenario("예약 변경 이벤트는 방을 소유한 호스트에게도 HOST 대상 outbox_event가 생긴다") {
+            val roomCode = "ROOM-HOST-NOTIFY-1"
+            savedRoomId(roomCode)
+            val hostId = "HOST-$roomCode"
+            val notificationKey = "NOTIFY-HOST-CHANGED"
+            val reservationNo = "OTA_BOOKING:REF-HOST-CHANGED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(notificationKey, reservationNo, "RESERVATION_CHANGED", roomCode = roomCode)),
+                ).andExpect(status().isOk)
+
+            val hostOutboxEvent =
+                outboxEventRepository
+                    .findAll()
+                    .filter { it.reservationNo == reservationNo }
+                    .firstOrNull { it.targetType == OutboxTargetType.HOST }
+            requireNotNull(hostOutboxEvent) { "HOST 대상 outbox_event가 저장돼야 합니다" }
+            hostOutboxEvent.targetCode shouldBe hostId
+            hostOutboxEvent.eventType shouldBe "RESERVATION_CHANGED"
+        }
+
+        scenario("예약 확정처럼 변경이 아닌 이벤트는 HOST 대상 outbox_event를 만들지 않는다") {
+            val roomCode = "ROOM-HOST-NOTIFY-2"
+            val roomId = savedRoomId(roomCode)
+            val notificationKey = "NOTIFY-HOST-NOT-CHANGED"
+            val reservationNo = "OTA_BOOKING:REF-HOST-NOT-CHANGED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(notificationKey, reservationNo, "RESERVATION_CONFIRMED", roomCode = roomId)),
+                ).andExpect(status().isOk)
+
+            outboxEventRepository
+                .findAll()
+                .none { it.reservationNo == reservationNo && it.targetType == OutboxTargetType.HOST } shouldBe true
+        }
+
+        scenario("호스트를 찾을 수 없으면 HOST 통보만 건너뛰고 원본 통보는 정상 저장된다") {
+            val notificationKey = "NOTIFY-HOST-NO-ROOM"
+            val reservationNo = "OTA_BOOKING:REF-HOST-NO-ROOM"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CHANGED", roomCode = "ROOM-DOES-NOT-EXIST"),
+                        ),
+                ).andExpect(status().isOk)
+
+            val savedOutboxEvent = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
+            savedOutboxEvent shouldHaveSize 1
+            savedOutboxEvent.first().targetType shouldBe OutboxTargetType.OTA_CHANNEL
         }
     }
 })

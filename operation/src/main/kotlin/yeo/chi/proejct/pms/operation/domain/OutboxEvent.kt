@@ -38,6 +38,18 @@ data class OutboxEvent(
             retryCount = 0,
             nextRetryAt = LocalDateTime.now(),
         )
+
+        fun ofHost(inboundEvent: InboundEvent, hostId: String, eventType: String) = OutboxEvent(
+            outboxKey = "${inboundEvent.reservationNo}:${OutboxTargetType.HOST}:$hostId:$eventType",
+            targetType = OutboxTargetType.HOST,
+            targetCode = hostId,
+            reservationNo = inboundEvent.reservationNo,
+            eventType = eventType,
+            payload = inboundEvent.payload,
+            status = OutboxEventStatus.PENDING,
+            retryCount = 0,
+            nextRetryAt = LocalDateTime.now(),
+        )
     }
 }
 

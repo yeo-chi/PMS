@@ -79,8 +79,8 @@ class OutboxEventDispatchWorker(
 
     // hosts 테이블엔 API로 호출 가능한 웹훅/콜백 채널이 없다(이메일/전화만) — 이메일/SMS 발송은 이
     // 프로젝트의 신뢰성 메커니즘 검증 범위를 벗어나는 별도 인프라가 필요해 스텁으로 남긴다
-    // (plan/21.md 6번 결정 사항). 현재 4개 이벤트 타입 중 어느 것도 HOST를 대상으로 만들지 않아
-    // 이 분기는 지금은 실행되지 않는다.
+    // (plan/21.md 6번 결정 사항). RESERVATION_CHANGED가 HOST를 대상으로 만든다
+    // (InboundEventService.notifyHost) — 도착 확인용 로그만 남기고 실제 발송은 하지 않는다.
     private fun deliverToHost(event: OutboxEventEntity): Boolean {
         hostRepository.findByHostId(event.targetCode) ?: return false
         logger.info(
