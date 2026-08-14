@@ -1,7 +1,4 @@
-package yeo.chi.proejct.pms.reservation.service
-
-import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
-import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
+package yeo.chi.proejct.pms.reservation.domain
 
 data class ChangeReservationCommand(
     val platformId: String,

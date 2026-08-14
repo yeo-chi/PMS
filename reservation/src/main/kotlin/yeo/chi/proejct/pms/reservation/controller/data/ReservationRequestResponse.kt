@@ -1,21 +1,21 @@
-package yeo.chi.proejct.pms.reservation.controller
+package yeo.chi.proejct.pms.reservation.controller.data
 
 import yeo.chi.proejct.pms.reservation.domain.RequestResultStatus
-import yeo.chi.proejct.pms.reservation.domain.ReservationRequest
+import yeo.chi.proejct.pms.reservation.domain.ReservationLog
 import java.time.OffsetDateTime
 
 data class ReservationRequestResponse(
     val requestId: Long?,
-    val reservationId: Long?,
+    val reservationCode: String?,
     val resultStatus: RequestResultStatus,
     val rejectReason: String?,
     val requestedAt: OffsetDateTime,
 )
 
-fun ReservationRequest.toResponse(): ReservationRequestResponse =
+fun ReservationLog.toResponse(): ReservationRequestResponse =
     ReservationRequestResponse(
         requestId = id,
-        reservationId = reservationId,
+        reservationCode = reservationCode,
         resultStatus = resultStatus,
         rejectReason = rejectReason,
         requestedAt = requestedAt,

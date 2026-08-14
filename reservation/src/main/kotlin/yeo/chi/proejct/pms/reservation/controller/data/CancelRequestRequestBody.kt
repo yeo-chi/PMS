@@ -1,4 +1,4 @@
-package yeo.chi.proejct.pms.reservation.controller
+package yeo.chi.proejct.pms.reservation.controller.data
 
 import jakarta.validation.constraints.NotNull
 import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason

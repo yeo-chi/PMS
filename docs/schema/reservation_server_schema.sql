@@ -21,8 +21,10 @@ CREATE TABLE reservations (
     id                           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
     -- 논리적 유니크 ID: "채널ID:채널이 발급한 예약참조번호" 조합에서 파생.
-    -- 외부 통신, 로그 추적, 타 서버(운영 서버)와의 참조에는 항상 이 값을 사용한다.
-    reservation_no               VARCHAR(200)
+    -- 외부 통신, 로그 추적, 타 서버(운영 서버)와의 참조뿐 아니라 아래 reservation_requests/
+    -- outbound_notifications의 FK로도 이 값을 사용한다(V3 마이그레이션, uq_reservation_code로
+    -- 유일성이 보장되므로 내부 PK 대신 이 논리 키를 그대로 참조해도 무방하다고 판단).
+    reservation_code              VARCHAR(200)
                                  GENERATED ALWAYS AS (platform_id || ':' || platform_reservation_ref) STORED,
 
     -- 채널 식별 (자사 서비스도 하나의 채널로 취급, 예: 'OTA_BOOKING', 'OTA_AGODA', 'SELF_SERVICE')
@@ -49,7 +51,7 @@ CREATE TABLE reservations (
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT uq_reservation_no UNIQUE (reservation_no),
+    CONSTRAINT uq_reservation_code UNIQUE (reservation_code),
 
     -- 핵심 제약: 같은 room_code에 대해 CONFIRMED 또는 PENDING_CANCEL 상태의 예약끼리는
     -- 날짜 범위가 겹칠 수 없다. (PENDING_CANCEL도 재고를 점유 중이므로 포함)
@@ -78,8 +80,10 @@ CREATE TABLE reservation_requests (
     --                또는 reservation_no + ':' + action + ':' + 요청시각(초단위)
     request_key                 VARCHAR(256) NOT NULL,
 
-    -- 대상 예약 (내부 PK 참조, BOOK 성공 시 채워짐. 조인 성능을 위해 내부 id 사용)
-    reservation_id              BIGINT REFERENCES reservations(id),
+    -- 대상 예약 (BOOK 성공 시 채워짐). reservations.reservation_code(논리 유니크 ID, uq_reservation_code로
+    -- 유일성 보장)를 그대로 FK로 참조한다 — 내부 PK 대신 이 값을 쓰면 로그 row만 봐도 어떤 예약인지
+    -- 바로 식별 가능하다는 이점이 있다(V3 마이그레이션).
+    reservation_code             VARCHAR(200) REFERENCES reservations(reservation_code),
 
     platform_id                 VARCHAR(64) NOT NULL,
 
@@ -105,7 +109,7 @@ CREATE TABLE reservation_requests (
     CONSTRAINT uq_request_key UNIQUE (request_key)
 );
 
-CREATE INDEX idx_reservation_requests_reservation_id ON reservation_requests (reservation_id);
+CREATE INDEX idx_reservation_requests_reservation_code ON reservation_requests (reservation_code);
 CREATE INDEX idx_reservation_requests_platform ON reservation_requests (platform_id, action);
 
 
@@ -125,8 +129,8 @@ CREATE TABLE outbound_notifications (
 
     -- BOOK이 겹침으로 거부된 경우 예약 row 자체가 없어 참조할 대상이 없으므로 nullable이다.
     -- 이 경우 payload에 reservationNo를 담아 발신 시 대체한다.
-    reservation_id                 BIGINT REFERENCES reservations(id),
-    request_id                     BIGINT REFERENCES reservation_requests(id),
+    reservation_code                VARCHAR(200) REFERENCES reservations(reservation_code),
+    request_key                     VARCHAR(256) REFERENCES reservation_requests(request_key),
 
     -- RESERVATION_CONFIRMED, RESERVATION_REJECTED(중복예약 등으로 거부),
     -- CANCEL_REQUESTED(호스트발 취소요청 전달), RESERVATION_CANCELLED(최종 취소 확정)

@@ -6,161 +6,61 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
-import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason
-import yeo.chi.proejct.pms.reservation.domain.OutboundNotification
-import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
-import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
-import yeo.chi.proejct.pms.reservation.domain.RequestResultStatus
-import yeo.chi.proejct.pms.reservation.domain.Reservation
-import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
-import yeo.chi.proejct.pms.reservation.domain.ReservationRequest
-import yeo.chi.proejct.pms.reservation.domain.ReservationRequestAction
-import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
-import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationEntity
-import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationRepository
-import yeo.chi.proejct.pms.reservation.persistent.ReservationEntity
-import yeo.chi.proejct.pms.reservation.persistent.ReservationRepository
-import yeo.chi.proejct.pms.reservation.persistent.ReservationRequestRepository
-import yeo.chi.proejct.pms.reservation.persistent.toDomain
-import yeo.chi.proejct.pms.reservation.persistent.toEntity
-import yeo.chi.proejct.pms.reservation.persistent.toRange
-import yeo.chi.proejct.pms.reservation.persistent.toReservationDateRange
-import java.time.LocalDate
+import yeo.chi.proejct.pms.reservation.domain.*
+import yeo.chi.proejct.pms.reservation.persistent.entity.OutboundNotificationEntity
+import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationEntity
+import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationLogEntity
+import yeo.chi.proejct.pms.reservation.persistent.entity.toRange
+import yeo.chi.proejct.pms.reservation.persistent.repository.OutboundNotificationRepository
+import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationLogRepository
+import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationRepository
 import java.time.OffsetDateTime
-
-private const val DUPLICATE_BOOKING_REJECT_REASON = "DUPLICATE_BOOKING"
-private const val RESERVATION_NOT_FOUND_REJECT_REASON = "RESERVATION_NOT_FOUND"
-private const val ALREADY_CANCELLED_REJECT_REASON = "ALREADY_CANCELLED"
-private const val RESERVATION_NOT_CHANGEABLE_REJECT_REASON = "RESERVATION_NOT_CHANGEABLE"
-private const val RESERVATION_CONFIRMED_EVENT_TYPE = "RESERVATION_CONFIRMED"
-private const val RESERVATION_CANCELLED_EVENT_TYPE = "RESERVATION_CANCELLED"
-private const val CANCEL_REQUESTED_EVENT_TYPE = "CANCEL_REQUESTED"
-private const val RESERVATION_CHANGED_EVENT_TYPE = "RESERVATION_CHANGED"
-private const val RESERVATION_REJECTED_EVENT_TYPE = "RESERVATION_REJECTED"
-private const val CANCEL_CONFIRM_MAX_ATTEMPTS = 3
-private const val CANCEL_REQUEST_MAX_ATTEMPTS = 3
-private const val CHANGE_MAX_ATTEMPTS = 3
-
-private data class ReservationConfirmedPayload(
-    val reservationNo: String,
-    val platformId: String,
-    val roomCode: String,
-    val startDate: LocalDate,
-    val endDate: LocalDate,
-)
-
-private data class ReservationCancelledPayload(
-    val reservationNo: String,
-    val platformId: String,
-    val roomCode: String,
-    val startDate: LocalDate,
-    val endDate: LocalDate,
-)
-
-private data class ReservationCancelRequestedPayload(
-    val reservationNo: String,
-    val platformId: String,
-    val roomCode: String,
-    val startDate: LocalDate,
-    val endDate: LocalDate,
-    val reason: CancelRequestReason,
-)
-
-private data class ReservationChangedPayload(
-    val reservationNo: String,
-    val platformId: String,
-    val roomCode: String,
-    val oldStartDate: LocalDate,
-    val oldEndDate: LocalDate,
-    val newStartDate: LocalDate,
-    val newEndDate: LocalDate,
-)
-
-// BOOK이 겹침으로 거부된 경우 예약 row가 없어 reservationNo를 DB에서 읽을 수 없다. reservations.reservation_no는
-// platform_id + ':' + platform_reservation_ref로 생성되는 컬럼이라, 저장된 적 없는 예약이라도 저장됐더라면
-// 가졌을 값을 커맨드만으로 그대로 계산할 수 있다.
-private data class ReservationRejectedPayload(
-    val reservationNo: String,
-    val platformId: String,
-    val roomCode: String,
-    val startDate: LocalDate,
-    val endDate: LocalDate,
-    val rejectReason: String,
-)
 
 @Service
 class ReservationService(
     private val reservationRepository: ReservationRepository,
-    private val reservationRequestRepository: ReservationRequestRepository,
+    private val reservationLogRepository: ReservationLogRepository,
     private val outboundNotificationRepository: OutboundNotificationRepository,
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
 ) {
-
-    fun book(command: BookReservationCommand): ReservationRequest {
+    fun book(command: BookReservationCommand): ReservationLog {
         require(command.initiatedBy != RequestInitiator.HOST) {
             "HOST는 예약 요청(BOOK)을 시작할 수 없습니다: initiatedBy=${command.initiatedBy}"
         }
 
-        val requestKey =
-            buildBookRequestKey(command.platformId, command.platformReservationRef, command.roomCode, command.dateRange)
+        command.buildBookRequestKey().let {
+            reservationLogRepository.findByRequestKey(it)
+                ?.let { existingRequest ->
+                    return existingRequest.toDomain()
+                }
 
-        reservationRequestRepository.findByRequestKey(requestKey)?.let { existingRequest ->
-            return existingRequest.toDomain()
-        }
-
-        return try {
-            attemptBook(command, requestKey)
-        } catch (overlapViolation: DataIntegrityViolationException) {
-            recordConflict(command, requestKey)
+            return try {
+                attemptBook(command, it)
+            } catch (_: DataIntegrityViolationException) {
+                recordConflict(command, it)
+            }
         }
     }
 
     private fun attemptBook(
         command: BookReservationCommand,
         requestKey: String,
-    ): ReservationRequest =
+    ): ReservationLog =
         checkNotNull(
             transactionTemplate.execute {
-                val now = OffsetDateTime.now()
-
-                val savedReservation =
-                    reservationRepository.saveAndFlush(
-                        Reservation
-                            .createNew(
-                                platformId = command.platformId,
-                                platformReservationRef = command.platformReservationRef,
-                                roomCode = command.roomCode,
-                                dateRange = command.dateRange,
-                                createdAt = now,
-                            ).toEntity(),
-                    )
+                // reservationCode는 DB가 생성하는 컬럼이라(ReservationEntity의 @Generated), 저장 전
+                // 도메인 객체의 reservationCode는 실제 값이 아닌 placeholder다. reservation_requests/
+                // outbound_notifications가 이 값을 FK로 참조하므로, 저장 후 재조회한 실제 값을 써야 한다.
+                val reservation =
+                    reservationRepository.saveAndFlush(ReservationEntity.from(Reservation.of(command))).toDomain()
 
                 val savedRequest =
-                    reservationRequestRepository.saveAndFlush(
-                        ReservationRequest(
-                            id = null,
-                            requestKey = requestKey,
-                            reservationId = savedReservation.id,
-                            platformId = command.platformId,
-                            action = ReservationRequestAction.BOOK,
-                            initiatedBy = command.initiatedBy,
-                            roomCode = command.roomCode,
-                            oldDateRange = null,
-                            newDateRange = command.dateRange,
-                            resultStatus = RequestResultStatus.SUCCESS,
-                            rejectReason = null,
-                            requestedAt = now,
-                        ).toEntity(),
+                    reservationLogRepository.saveAndFlush(
+                        ReservationLogEntity.from(ReservationLog.booked(requestKey, reservation, command.initiatedBy)),
                     )
 
-                val reservationNo =
-                    requireNotNull(savedReservation.reservationNo) {
-                        "저장 직후 reservation_no는 채워져 있어야 합니다"
-                    }
-                outboundNotificationRepository.saveAndFlush(
-                    confirmedNotificationEntity(savedReservation.id, savedRequest.id, reservationNo, command, now),
-                )
+                outboundNotificationRepository.saveAndFlush(confirmedNotificationEntity(requestKey, reservation))
 
                 savedRequest.toDomain()
             },
@@ -169,7 +69,7 @@ class ReservationService(
     private fun recordConflict(
         command: BookReservationCommand,
         requestKey: String,
-    ): ReservationRequest {
+    ): ReservationLog {
         // uq_request_key 위반으로 여기서 예외가 나면 트랜잭션(과 그 Hibernate 세션)은 이미 롤백된 상태다.
         // 같은 세션을 재사용해 재조회하면 "세션이 예외 이후에 flush됨" 문제로 이어지므로,
         // 예외를 트랜잭션 바깥으로 흘려보낸 뒤 별도 트랜잭션으로 재조회한다.
@@ -178,40 +78,25 @@ class ReservationService(
                 transactionTemplate.execute {
                     val now = OffsetDateTime.now()
                     val savedRequest =
-                        reservationRequestRepository.saveAndFlush(
-                            ReservationRequest(
-                                id = null,
-                                requestKey = requestKey,
-                                reservationId = null,
-                                platformId = command.platformId,
-                                action = ReservationRequestAction.BOOK,
-                                initiatedBy = command.initiatedBy,
-                                roomCode = command.roomCode,
-                                oldDateRange = null,
-                                newDateRange = command.dateRange,
-                                resultStatus = RequestResultStatus.CONFLICT,
-                                rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
-                                requestedAt = now,
-                            ).toEntity(),
+                        reservationLogRepository.saveAndFlush(
+                            ReservationLogEntity.from(ReservationLog.bookConflict(requestKey, command, now)),
                         )
 
-                    // 패자 채널에도 거부 통보를 남긴다(기획문서 4.1). 예약 row가 없어 reservation_id는
-                    // null — reservationNo는 payload 안에 담아 발신 시 대체한다(아래 rejectedNotificationEntity).
-                    outboundNotificationRepository.saveAndFlush(
-                        rejectedNotificationEntity(command, savedRequest.id, now),
-                    )
+                    // 패자 채널에도 거부 통보를 남긴다(기획문서 4.1). 예약 row가 없어 reservation_code는
+                    // null — reservationNo는 payload 안에 담아 발신 시 대체한다.
+                    outboundNotificationRepository.saveAndFlush(rejectedNotificationEntity(command, requestKey, now))
 
                     savedRequest.toDomain()
                 },
             ) { "충돌 기록 트랜잭션은 항상 값을 반환해야 합니다" }
         } catch (duplicateRequestKey: DataIntegrityViolationException) {
-            checkNotNull(reservationRequestRepository.findByRequestKey(requestKey)) {
+            checkNotNull(reservationLogRepository.findByRequestKey(requestKey)) {
                 "uq_request_key 위반이면 동일 requestKey row가 반드시 존재해야 합니다"
             }.toDomain()
         }
     }
 
-    fun cancelConfirm(command: CancelConfirmCommand): ReservationRequest {
+    fun cancelConfirm(command: CancelConfirmCommand): ReservationLog {
         val requestKey =
             buildCancelConfirmRequestKey(
                 command.platformId,
@@ -220,7 +105,7 @@ class ReservationService(
                 OffsetDateTime.now(),
             )
 
-        reservationRequestRepository.findByRequestKey(requestKey)?.let { existingRequest ->
+        reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
         }
 
@@ -232,7 +117,7 @@ class ReservationService(
     private fun cancelConfirmWithRetry(
         command: CancelConfirmCommand,
         requestKey: String,
-    ): ReservationRequest {
+    ): ReservationLog {
         var attempt = 1
         while (true) {
             try {
@@ -247,7 +132,7 @@ class ReservationService(
     private fun attemptCancelConfirm(
         command: CancelConfirmCommand,
         requestKey: String,
-    ): ReservationRequest =
+    ): ReservationLog =
         checkNotNull(
             transactionTemplate.execute {
                 val reservation =
@@ -257,134 +142,59 @@ class ReservationService(
                     )
 
                 if (reservation == null) {
-                    reservationRequestRepository
-                        .saveAndFlush(reservationNotFoundRequest(command, requestKey).toEntity())
+                    reservationLogRepository
+                        .saveAndFlush(
+                            ReservationLogEntity.from(
+                                ReservationLog.cancelConfirmNotFound(
+                                    requestKey,
+                                    command
+                                )
+                            )
+                        )
                         .toDomain()
                 } else {
                     when (reservation.status) {
                         ReservationStatus.CANCELLED ->
-                            reservationRequestRepository
-                                .saveAndFlush(alreadyCancelledRequest(command, requestKey, reservation).toEntity())
-                                .toDomain()
+                            reservationLogRepository
+                                .saveAndFlush(
+                                    ReservationLogEntity.from(
+                                        ReservationLog.cancelConfirmAlreadyCancelled(
+                                            requestKey,
+                                            reservation.toDomain()
+                                        ),
+                                    ),
+                                ).toDomain()
 
                         ReservationStatus.CONFIRMED, ReservationStatus.PENDING_CANCEL ->
-                            confirmCancellation(command, requestKey, reservation)
+                            confirmCancellation(requestKey, reservation)
                     }
                 }
             },
         ) { "CANCEL_CONFIRM 트랜잭션은 항상 값을 반환해야 합니다" }
 
     private fun confirmCancellation(
-        command: CancelConfirmCommand,
         requestKey: String,
         reservation: ReservationEntity,
-    ): ReservationRequest {
+    ): ReservationLog {
         val now = OffsetDateTime.now()
-        val previousDateRange = reservation.dateRange.toReservationDateRange()
 
         reservation.status = ReservationStatus.CANCELLED
-        val savedReservation = reservationRepository.saveAndFlush(reservation)
+        val savedReservation = reservationRepository.saveAndFlush(reservation).toDomain()
 
         val savedRequest =
-            reservationRequestRepository.saveAndFlush(
-                ReservationRequest(
-                    id = null,
-                    requestKey = requestKey,
-                    reservationId = savedReservation.id,
-                    platformId = command.platformId,
-                    action = ReservationRequestAction.CANCEL_CONFIRM,
-                    initiatedBy = RequestInitiator.OTA,
-                    roomCode = savedReservation.roomCode,
-                    oldDateRange = previousDateRange,
-                    newDateRange = null,
-                    resultStatus = RequestResultStatus.SUCCESS,
-                    rejectReason = null,
-                    requestedAt = now,
-                ).toEntity(),
+            reservationLogRepository.saveAndFlush(
+                ReservationLogEntity.from(ReservationLog.cancelConfirmed(requestKey, savedReservation, now)),
             )
 
-        outboundNotificationRepository.saveAndFlush(
-            cancelledNotificationEntity(savedReservation, savedRequest.id, previousDateRange, now),
-        )
+        outboundNotificationRepository.saveAndFlush(cancelledNotificationEntity(requestKey, savedReservation, now))
 
         return savedRequest.toDomain()
     }
 
-    private fun reservationNotFoundRequest(
-        command: CancelConfirmCommand,
-        requestKey: String,
-    ): ReservationRequest =
-        ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = null,
-            platformId = command.platformId,
-            action = ReservationRequestAction.CANCEL_CONFIRM,
-            initiatedBy = RequestInitiator.OTA,
-            roomCode = null,
-            oldDateRange = null,
-            newDateRange = null,
-            resultStatus = RequestResultStatus.FAILED,
-            rejectReason = RESERVATION_NOT_FOUND_REJECT_REASON,
-            requestedAt = OffsetDateTime.now(),
-        )
-
-    private fun alreadyCancelledRequest(
-        command: CancelConfirmCommand,
-        requestKey: String,
-        reservation: ReservationEntity,
-    ): ReservationRequest =
-        ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = reservation.id,
-            platformId = command.platformId,
-            action = ReservationRequestAction.CANCEL_CONFIRM,
-            initiatedBy = RequestInitiator.OTA,
-            roomCode = reservation.roomCode,
-            oldDateRange = reservation.dateRange.toReservationDateRange(),
-            newDateRange = null,
-            resultStatus = RequestResultStatus.SUCCESS,
-            rejectReason = null,
-            requestedAt = OffsetDateTime.now(),
-        )
-
-    private fun cancelledNotificationEntity(
-        reservation: ReservationEntity,
-        requestId: Long,
-        previousDateRange: ReservationDateRange,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity {
-        val reservationNo =
-            requireNotNull(reservation.reservationNo) { "저장된 예약은 reservation_no를 가지고 있어야 합니다" }
-        val payload =
-            ReservationCancelledPayload(
-                reservationNo = reservationNo,
-                platformId = reservation.platformId,
-                roomCode = reservation.roomCode,
-                startDate = previousDateRange.startDate,
-                endDate = previousDateRange.endDate,
-            )
-
-        return OutboundNotification(
-            id = null,
-            notificationKey = "$reservationNo:$RESERVATION_CANCELLED_EVENT_TYPE",
-            reservationId = reservation.id,
-            requestId = requestId,
-            eventType = RESERVATION_CANCELLED_EVENT_TYPE,
-            payload = objectMapper.writeValueAsString(payload),
-            status = OutboundNotificationStatus.PENDING,
-            retryCount = 0,
-            nextRetryAt = now,
-            createdAt = now,
-            updatedAt = now,
-        ).toEntity()
-    }
-
-    fun cancelRequest(command: CancelRequestCommand): ReservationRequest {
+    fun cancelRequest(command: CancelRequestCommand): ReservationLog {
         val requestKey = buildCancelRequestKey(command.reservationId, command.externalRequestId, OffsetDateTime.now())
 
-        reservationRequestRepository.findByRequestKey(requestKey)?.let { existingRequest ->
+        reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
         }
 
@@ -396,7 +206,7 @@ class ReservationService(
     private fun cancelRequestWithRetry(
         command: CancelRequestCommand,
         requestKey: String,
-    ): ReservationRequest {
+    ): ReservationLog {
         var attempt = 1
         while (true) {
             try {
@@ -411,7 +221,7 @@ class ReservationService(
     private fun attemptCancelRequest(
         command: CancelRequestCommand,
         requestKey: String,
-    ): ReservationRequest =
+    ): ReservationLog =
         checkNotNull(
             transactionTemplate.execute {
                 val reservation = reservationRepository.findById(command.reservationId).orElse(null)
@@ -420,19 +230,34 @@ class ReservationService(
                     // reservation_requests.platform_id는 NOT NULL이지만, 호스트가 존재하지 않는 reservationId로
                     // 요청한 경우 어떤 채널(platformId)과도 연관지을 수 없어 감사 로그 row를 만들 수 없다.
                     // DB에는 아무것도 남기지 않고 합성된(비영속) FAILED 결과만 반환한다.
-                    reservationNotFoundResult(requestKey)
+                    logger.warn("CANCEL_REQUEST 대상 예약을 찾을 수 없어 감사 로그 없이 처리됨: requestKey={}", requestKey)
+                    ReservationLog.cancelRequestNotFound(requestKey)
                 } else {
                     when (reservation.status) {
                         ReservationStatus.CONFIRMED -> confirmCancelRequest(command, requestKey, reservation)
 
                         ReservationStatus.PENDING_CANCEL ->
-                            reservationRequestRepository
-                                .saveAndFlush(alreadyPendingCancelRequest(command, requestKey, reservation).toEntity())
-                                .toDomain()
+                            reservationLogRepository
+                                .saveAndFlush(
+                                    ReservationLogEntity.from(
+                                        ReservationLog.cancelRequestAlreadyPending(
+                                            requestKey,
+                                            reservation.toDomain(),
+                                            command.reason,
+                                        ),
+                                    ),
+                                ).toDomain()
 
                         ReservationStatus.CANCELLED ->
-                            reservationRequestRepository
-                                .saveAndFlush(alreadyCancelledCancelRequest(requestKey, reservation).toEntity())
+                            reservationLogRepository
+                                .saveAndFlush(
+                                    ReservationLogEntity.from(
+                                        ReservationLog.cancelRequestAlreadyCancelled(
+                                            requestKey,
+                                            reservation.toDomain()
+                                        ),
+                                    ),
+                                )
                                 .toDomain()
                     }
                 }
@@ -443,198 +268,77 @@ class ReservationService(
         command: CancelRequestCommand,
         requestKey: String,
         reservation: ReservationEntity,
-    ): ReservationRequest {
+    ): ReservationLog {
         val now = OffsetDateTime.now()
-        val currentDateRange = reservation.dateRange.toReservationDateRange()
 
         reservation.status = ReservationStatus.PENDING_CANCEL
-        val savedReservation = reservationRepository.saveAndFlush(reservation)
+        val savedReservation = reservationRepository.saveAndFlush(reservation).toDomain()
 
         val savedRequest =
-            reservationRequestRepository.saveAndFlush(
-                ReservationRequest(
-                    id = null,
-                    requestKey = requestKey,
-                    reservationId = savedReservation.id,
-                    platformId = savedReservation.platformId,
-                    action = ReservationRequestAction.CANCEL_REQUEST,
-                    initiatedBy = RequestInitiator.HOST,
-                    roomCode = savedReservation.roomCode,
-                    oldDateRange = currentDateRange,
-                    newDateRange = null,
-                    resultStatus = RequestResultStatus.SUCCESS,
-                    rejectReason = command.reason.name,
-                    requestedAt = now,
-                ).toEntity(),
+            reservationLogRepository.saveAndFlush(
+                ReservationLogEntity.from(
+                    ReservationLog.cancelRequested(requestKey, savedReservation, command.reason, now),
+                ),
             )
 
         outboundNotificationRepository.saveAndFlush(
-            cancelRequestedNotificationEntity(savedReservation, savedRequest.id, command.reason, now),
+            cancelRequestedNotificationEntity(requestKey, savedReservation, command.reason, now),
         )
 
         return savedRequest.toDomain()
     }
 
-    private fun reservationNotFoundResult(requestKey: String): ReservationRequest {
-        // reservation_requests.platform_id는 NOT NULL이라 존재하지 않는 reservationId로 온
-        // 취소요청은 감사 로그 row를 남길 수 없다(reservationNotFoundResult 호출부 주석 참고).
-        // 아무 row도 남지 않아 추적이 안 되므로, 최소한 로그로는 흔적을 남긴다.
-        logger.warn("CANCEL_REQUEST 대상 예약을 찾을 수 없어 감사 로그 없이 처리됨: requestKey={}", requestKey)
-        return ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = null,
-            platformId = "",
-            action = ReservationRequestAction.CANCEL_REQUEST,
-            initiatedBy = RequestInitiator.HOST,
-            roomCode = null,
-            oldDateRange = null,
-            newDateRange = null,
-            resultStatus = RequestResultStatus.FAILED,
-            rejectReason = RESERVATION_NOT_FOUND_REJECT_REASON,
-            requestedAt = OffsetDateTime.now(),
-        )
-    }
-
-    private fun alreadyPendingCancelRequest(
-        command: CancelRequestCommand,
-        requestKey: String,
-        reservation: ReservationEntity,
-    ): ReservationRequest =
-        ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = reservation.id,
-            platformId = reservation.platformId,
-            action = ReservationRequestAction.CANCEL_REQUEST,
-            initiatedBy = RequestInitiator.HOST,
-            roomCode = reservation.roomCode,
-            oldDateRange = reservation.dateRange.toReservationDateRange(),
-            newDateRange = null,
-            resultStatus = RequestResultStatus.SUCCESS,
-            rejectReason = command.reason.name,
-            requestedAt = OffsetDateTime.now(),
-        )
-
-    private fun alreadyCancelledCancelRequest(
-        requestKey: String,
-        reservation: ReservationEntity,
-    ): ReservationRequest =
-        ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = reservation.id,
-            platformId = reservation.platformId,
-            action = ReservationRequestAction.CANCEL_REQUEST,
-            initiatedBy = RequestInitiator.HOST,
-            roomCode = reservation.roomCode,
-            oldDateRange = reservation.dateRange.toReservationDateRange(),
-            newDateRange = null,
-            resultStatus = RequestResultStatus.FAILED,
-            rejectReason = ALREADY_CANCELLED_REJECT_REASON,
-            requestedAt = OffsetDateTime.now(),
-        )
-
-    private fun cancelRequestedNotificationEntity(
-        reservation: ReservationEntity,
-        requestId: Long,
-        reason: CancelRequestReason,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity {
-        val reservationNo =
-            requireNotNull(reservation.reservationNo) { "저장된 예약은 reservation_no를 가지고 있어야 합니다" }
-        val dateRange = reservation.dateRange.toReservationDateRange()
-        val payload =
-            ReservationCancelRequestedPayload(
-                reservationNo = reservationNo,
-                platformId = reservation.platformId,
-                roomCode = reservation.roomCode,
-                startDate = dateRange.startDate,
-                endDate = dateRange.endDate,
-                reason = reason,
-            )
-
-        return OutboundNotification(
-            id = null,
-            notificationKey = "$reservationNo:$CANCEL_REQUESTED_EVENT_TYPE",
-            reservationId = reservation.id,
-            requestId = requestId,
-            eventType = CANCEL_REQUESTED_EVENT_TYPE,
-            payload = objectMapper.writeValueAsString(payload),
-            status = OutboundNotificationStatus.PENDING,
-            retryCount = 0,
-            nextRetryAt = now,
-            createdAt = now,
-            updatedAt = now,
-        ).toEntity()
-    }
-
     private fun confirmedNotificationEntity(
-        reservationId: Long,
-        requestId: Long,
-        reservationNo: String,
-        command: BookReservationCommand,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity {
-        val payload =
-            ReservationConfirmedPayload(
-                reservationNo = reservationNo,
-                platformId = command.platformId,
-                roomCode = command.roomCode,
-                startDate = command.dateRange.startDate,
-                endDate = command.dateRange.endDate,
-            )
-
-        return OutboundNotification(
-            id = null,
-            notificationKey = "$reservationNo:$RESERVATION_CONFIRMED_EVENT_TYPE",
-            reservationId = reservationId,
-            requestId = requestId,
-            eventType = RESERVATION_CONFIRMED_EVENT_TYPE,
-            payload = objectMapper.writeValueAsString(payload),
-            status = OutboundNotificationStatus.PENDING,
-            retryCount = 0,
-            nextRetryAt = now,
-            createdAt = now,
-            updatedAt = now,
-        ).toEntity()
-    }
+        requestKey: String,
+        reservation: Reservation,
+    ): OutboundNotificationEntity =
+        OutboundNotificationEntity.from(OutboundNotification.from(requestKey, reservation, objectMapper))
 
     private fun rejectedNotificationEntity(
         command: BookReservationCommand,
-        requestId: Long,
+        requestKey: String,
         now: OffsetDateTime,
-    ): OutboundNotificationEntity {
-        val reservationNo = "${command.platformId}:${command.platformReservationRef}"
-        val payload =
-            ReservationRejectedPayload(
-                reservationNo = reservationNo,
-                platformId = command.platformId,
-                roomCode = command.roomCode,
-                startDate = command.dateRange.startDate,
-                endDate = command.dateRange.endDate,
-                rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
-            )
+    ): OutboundNotificationEntity =
+        OutboundNotificationEntity.from(OutboundNotification.rejected(requestKey, command, now, objectMapper))
 
-        // CHANGE의 거부 알림과 같은 이유로 requestId를 키에 포함한다. BOOK의 request_key가 이미
-        // platformReservationRef를 포함하므로(#14) 이론적으로는 reservationNo만으로도 유일하지만,
-        // 그 전제에 기대지 않고 CHANGE와 동일하게 안전한 패턴을 그대로 따른다.
-        return OutboundNotification(
-            id = null,
-            notificationKey = "$reservationNo:$RESERVATION_REJECTED_EVENT_TYPE:$requestId",
-            reservationId = null,
-            requestId = requestId,
-            eventType = RESERVATION_REJECTED_EVENT_TYPE,
-            payload = objectMapper.writeValueAsString(payload),
-            status = OutboundNotificationStatus.PENDING,
-            retryCount = 0,
-            nextRetryAt = now,
-            createdAt = now,
-            updatedAt = now,
-        ).toEntity()
-    }
+    private fun cancelledNotificationEntity(
+        requestKey: String,
+        reservation: Reservation,
+        now: OffsetDateTime,
+    ): OutboundNotificationEntity =
+        OutboundNotificationEntity.from(OutboundNotification.cancelled(requestKey, reservation, now, objectMapper))
 
-    fun change(command: ChangeReservationCommand): ReservationRequest {
+    private fun cancelRequestedNotificationEntity(
+        requestKey: String,
+        reservation: Reservation,
+        reason: CancelRequestReason,
+        now: OffsetDateTime,
+    ): OutboundNotificationEntity =
+        OutboundNotificationEntity.from(
+            OutboundNotification.cancelRequested(requestKey, reservation, reason, now, objectMapper),
+        )
+
+    private fun changedNotificationEntity(
+        requestKey: String,
+        reservation: Reservation,
+        newDateRange: ReservationDateRange,
+        now: OffsetDateTime,
+    ): OutboundNotificationEntity =
+        OutboundNotificationEntity.from(
+            OutboundNotification.changed(requestKey, reservation, newDateRange, now, objectMapper),
+        )
+
+    private fun changeRejectedNotificationEntity(
+        requestKey: String,
+        reservation: Reservation,
+        newDateRange: ReservationDateRange,
+        now: OffsetDateTime,
+    ): OutboundNotificationEntity =
+        OutboundNotificationEntity.from(
+            OutboundNotification.changeRejected(requestKey, reservation, newDateRange, now, objectMapper),
+        )
+
+    fun change(command: ChangeReservationCommand): ReservationLog {
         require(command.initiatedBy != RequestInitiator.HOST) {
             "HOST는 예약 변경(CHANGE)을 요청할 수 없습니다: initiatedBy=${command.initiatedBy}"
         }
@@ -647,7 +351,7 @@ class ReservationService(
                 OffsetDateTime.now(),
             )
 
-        reservationRequestRepository.findByRequestKey(requestKey)?.let { existingRequest ->
+        reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
         }
 
@@ -659,7 +363,7 @@ class ReservationService(
     private fun changeWithRetry(
         command: ChangeReservationCommand,
         requestKey: String,
-    ): ReservationRequest {
+    ): ReservationLog {
         var attempt = 1
         while (true) {
             try {
@@ -676,7 +380,7 @@ class ReservationService(
     private fun attemptChange(
         command: ChangeReservationCommand,
         requestKey: String,
-    ): ReservationRequest =
+    ): ReservationLog =
         checkNotNull(
             transactionTemplate.execute {
                 val reservation =
@@ -686,15 +390,18 @@ class ReservationService(
                     )
 
                 if (reservation == null) {
-                    reservationRequestRepository
-                        .saveAndFlush(changeReservationNotFoundRequest(command, requestKey).toEntity())
+                    reservationLogRepository
+                        .saveAndFlush(ReservationLogEntity.from(ReservationLog.changeNotFound(requestKey, command)))
                         .toDomain()
                 } else {
                     when (reservation.status) {
                         ReservationStatus.PENDING_CANCEL, ReservationStatus.CANCELLED ->
-                            reservationRequestRepository
-                                .saveAndFlush(reservationNotChangeableRequest(command, requestKey, reservation).toEntity())
-                                .toDomain()
+                            reservationLogRepository
+                                .saveAndFlush(
+                                    ReservationLogEntity.from(
+                                        ReservationLog.changeNotChangeable(requestKey, command, reservation.toDomain()),
+                                    ),
+                                ).toDomain()
 
                         ReservationStatus.CONFIRMED -> confirmChange(command, requestKey, reservation)
                     }
@@ -706,40 +413,21 @@ class ReservationService(
         command: ChangeReservationCommand,
         requestKey: String,
         reservation: ReservationEntity,
-    ): ReservationRequest {
+    ): ReservationLog {
         val now = OffsetDateTime.now()
-        val oldDateRange = reservation.dateRange.toReservationDateRange()
+        // dateRange를 바꾸기 전 스냅샷 — ReservationLog.changed와 알림의 oldDateRange로 그대로 쓴다.
+        val originalReservation = reservation.toDomain()
 
         reservation.dateRange = command.newDateRange.toRange()
-        val savedReservation = reservationRepository.saveAndFlush(reservation)
+        reservationRepository.saveAndFlush(reservation)
 
         val savedRequest =
-            reservationRequestRepository.saveAndFlush(
-                ReservationRequest(
-                    id = null,
-                    requestKey = requestKey,
-                    reservationId = savedReservation.id,
-                    platformId = command.platformId,
-                    action = ReservationRequestAction.CHANGE,
-                    initiatedBy = command.initiatedBy,
-                    roomCode = savedReservation.roomCode,
-                    oldDateRange = oldDateRange,
-                    newDateRange = command.newDateRange,
-                    resultStatus = RequestResultStatus.SUCCESS,
-                    rejectReason = null,
-                    requestedAt = now,
-                ).toEntity(),
+            reservationLogRepository.saveAndFlush(
+                ReservationLogEntity.from(ReservationLog.changed(requestKey, command, originalReservation, now)),
             )
 
         outboundNotificationRepository.saveAndFlush(
-            changeEventNotificationEntity(
-                reservation = savedReservation,
-                requestId = savedRequest.id,
-                eventType = RESERVATION_CHANGED_EVENT_TYPE,
-                oldDateRange = oldDateRange,
-                newDateRange = command.newDateRange,
-                now = now,
-            ),
+            changedNotificationEntity(requestKey, originalReservation, command.newDateRange, now),
         )
 
         return savedRequest.toDomain()
@@ -750,7 +438,7 @@ class ReservationService(
     private fun recordChangeRejected(
         command: ChangeReservationCommand,
         requestKey: String,
-    ): ReservationRequest =
+    ): ReservationLog =
         try {
             checkNotNull(
                 transactionTemplate.execute {
@@ -760,126 +448,38 @@ class ReservationService(
                                 command.platformId,
                                 command.platformReservationRef,
                             ),
-                        ) { "겹침으로 거부하기 직전까지 존재가 확인된 예약이 재조회 시점에 사라질 수 없습니다" }
+                        ) { "겹침으로 거부하기 직전까지 존재가 확인된 예약이 재조회 시점에 사라질 수 없습니다" }.toDomain()
                     val now = OffsetDateTime.now()
 
                     val rejectedRequest =
-                        reservationRequestRepository.saveAndFlush(
-                            ReservationRequest(
-                                id = null,
-                                requestKey = requestKey,
-                                reservationId = reservation.id,
-                                platformId = command.platformId,
-                                action = ReservationRequestAction.CHANGE,
-                                initiatedBy = command.initiatedBy,
-                                roomCode = reservation.roomCode,
-                                oldDateRange = reservation.dateRange.toReservationDateRange(),
-                                newDateRange = command.newDateRange,
-                                resultStatus = RequestResultStatus.CONFLICT,
-                                rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
-                                requestedAt = now,
-                            ).toEntity(),
+                        reservationLogRepository.saveAndFlush(
+                            ReservationLogEntity.from(
+                                ReservationLog.changeConflict(
+                                    requestKey,
+                                    command,
+                                    reservation,
+                                    now
+                                )
+                            ),
                         )
 
                     outboundNotificationRepository.saveAndFlush(
-                        changeEventNotificationEntity(
-                            reservation = reservation,
-                            requestId = rejectedRequest.id,
-                            eventType = RESERVATION_REJECTED_EVENT_TYPE,
-                            oldDateRange = reservation.dateRange.toReservationDateRange(),
-                            newDateRange = command.newDateRange,
-                            now = now,
-                        ),
+                        changeRejectedNotificationEntity(requestKey, reservation, command.newDateRange, now),
                     )
 
                     rejectedRequest.toDomain()
                 },
             ) { "거부 기록 트랜잭션은 항상 값을 반환해야 합니다" }
-        } catch (duplicateRequestKey: DataIntegrityViolationException) {
-            checkNotNull(reservationRequestRepository.findByRequestKey(requestKey)) {
+        } catch (_: DataIntegrityViolationException) {
+            checkNotNull(reservationLogRepository.findByRequestKey(requestKey)) {
                 "uq_request_key 위반이면 동일 requestKey row가 반드시 존재해야 합니다"
             }.toDomain()
         }
 
-    private fun changeReservationNotFoundRequest(
-        command: ChangeReservationCommand,
-        requestKey: String,
-    ): ReservationRequest =
-        ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = null,
-            platformId = command.platformId,
-            action = ReservationRequestAction.CHANGE,
-            initiatedBy = command.initiatedBy,
-            roomCode = null,
-            oldDateRange = null,
-            newDateRange = command.newDateRange,
-            resultStatus = RequestResultStatus.FAILED,
-            rejectReason = RESERVATION_NOT_FOUND_REJECT_REASON,
-            requestedAt = OffsetDateTime.now(),
-        )
-
-    private fun reservationNotChangeableRequest(
-        command: ChangeReservationCommand,
-        requestKey: String,
-        reservation: ReservationEntity,
-    ): ReservationRequest =
-        ReservationRequest(
-            id = null,
-            requestKey = requestKey,
-            reservationId = reservation.id,
-            platformId = command.platformId,
-            action = ReservationRequestAction.CHANGE,
-            initiatedBy = command.initiatedBy,
-            roomCode = reservation.roomCode,
-            oldDateRange = reservation.dateRange.toReservationDateRange(),
-            newDateRange = command.newDateRange,
-            resultStatus = RequestResultStatus.FAILED,
-            rejectReason = RESERVATION_NOT_CHANGEABLE_REJECT_REASON,
-            requestedAt = OffsetDateTime.now(),
-        )
-
-    private fun changeEventNotificationEntity(
-        reservation: ReservationEntity,
-        requestId: Long,
-        eventType: String,
-        oldDateRange: ReservationDateRange,
-        newDateRange: ReservationDateRange,
-        now: OffsetDateTime,
-    ): OutboundNotificationEntity {
-        val reservationNo =
-            requireNotNull(reservation.reservationNo) { "저장된 예약은 reservation_no를 가지고 있어야 합니다" }
-        val payload =
-            ReservationChangedPayload(
-                reservationNo = reservationNo,
-                platformId = reservation.platformId,
-                roomCode = reservation.roomCode,
-                oldStartDate = oldDateRange.startDate,
-                oldEndDate = oldDateRange.endDate,
-                newStartDate = newDateRange.startDate,
-                newEndDate = newDateRange.endDate,
-            )
-
-        // notification_key 유일성: CHANGE는 같은 예약에 대해 여러 번 성공/거부될 수 있는 첫 액션이라,
-        // 다른 액션들이 쓰는 "reservationNo:eventType" 형식만으로는 uq_notification_key 위반이 난다.
-        // requestId(항상 새로 생성되는 값)를 포함해 이벤트 단위로 유일성을 보장한다.
-        return OutboundNotification(
-            id = null,
-            notificationKey = "$reservationNo:$eventType:$requestId",
-            reservationId = reservation.id,
-            requestId = requestId,
-            eventType = eventType,
-            payload = objectMapper.writeValueAsString(payload),
-            status = OutboundNotificationStatus.PENDING,
-            retryCount = 0,
-            nextRetryAt = now,
-            createdAt = now,
-            updatedAt = now,
-        ).toEntity()
-    }
-
     companion object {
         private val logger = LoggerFactory.getLogger(ReservationService::class.java)
+        private const val CANCEL_CONFIRM_MAX_ATTEMPTS = 3
+        private const val CANCEL_REQUEST_MAX_ATTEMPTS = 3
+        private const val CHANGE_MAX_ATTEMPTS = 3
     }
 }

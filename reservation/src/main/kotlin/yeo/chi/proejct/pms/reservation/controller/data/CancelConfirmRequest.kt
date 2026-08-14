@@ -1,7 +1,7 @@
-package yeo.chi.proejct.pms.reservation.controller
+package yeo.chi.proejct.pms.reservation.controller.data
 
 import jakarta.validation.constraints.NotBlank
-import yeo.chi.proejct.pms.reservation.service.CancelConfirmCommand
+import yeo.chi.proejct.pms.reservation.domain.CancelConfirmCommand
 
 data class CancelConfirmRequest(
     @field:NotBlank val platformId: String,

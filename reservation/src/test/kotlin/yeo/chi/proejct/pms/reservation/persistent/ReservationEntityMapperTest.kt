@@ -5,6 +5,9 @@ import io.kotest.matchers.shouldBe
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
+import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationEntity
+import yeo.chi.proejct.pms.reservation.persistent.entity.toReservationDateRange
+import yeo.chi.proejct.pms.reservation.persistent.entity.toRange
 import java.time.LocalDate
 import java.time.OffsetDateTime
 
@@ -14,11 +17,10 @@ class ReservationEntityMapperTest : FeatureSpec({
             val createdAt = OffsetDateTime.now()
             val reservation =
                 Reservation(
-                    id = 1L,
-                    reservationNo = "OTA_BOOKING:REF-1",
+                    reservationCode = "OTA_BOOKING:REF-1",
                     platformId = "OTA_BOOKING",
                     platformReservationRef = "REF-1",
-                    roomCode = "ROOM-101",
+                    roomId = "ROOM-101",
                     dateRange =
                         ReservationDateRange(
                             startDate = LocalDate.of(2026, 1, 1),
@@ -30,7 +32,7 @@ class ReservationEntityMapperTest : FeatureSpec({
                     updatedAt = createdAt,
                 )
 
-            val roundTripped = reservation.toEntity().toDomain()
+            val roundTripped = ReservationEntity.from(reservation).toDomain()
 
             roundTripped shouldBe reservation
         }

@@ -8,16 +8,18 @@ import jakarta.persistence.EntityManager
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.support.TransactionTemplate
+import yeo.chi.proejct.pms.reservation.domain.BookReservationCommand
+import yeo.chi.proejct.pms.reservation.domain.ChangeReservationCommand
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.domain.RequestResultStatus
-import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationRepository
 import yeo.chi.proejct.pms.reservation.persistent.PostgresIntegrationTest
-import yeo.chi.proejct.pms.reservation.persistent.ReservationRepository
-import yeo.chi.proejct.pms.reservation.persistent.ReservationRequestRepository
-import yeo.chi.proejct.pms.reservation.persistent.toEntity
+import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationEntity
+import yeo.chi.proejct.pms.reservation.persistent.repository.OutboundNotificationRepository
+import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationRepository
+import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationLogRepository
 import java.time.LocalDate
 import java.time.OffsetDateTime
 
@@ -25,7 +27,7 @@ import java.time.OffsetDateTime
 class ReservationChangeServiceTest(
     @Autowired private val reservationService: ReservationService,
     @Autowired private val reservationRepository: ReservationRepository,
-    @Autowired private val reservationRequestRepository: ReservationRequestRepository,
+    @Autowired private val reservationLogRepository: ReservationLogRepository,
     @Autowired private val outboundNotificationRepository: OutboundNotificationRepository,
     @Autowired private val transactionTemplate: TransactionTemplate,
     @Autowired private val entityManager: EntityManager,
@@ -40,7 +42,7 @@ class ReservationChangeServiceTest(
         BookReservationCommand(
             platformId = "OTA_BOOKING",
             platformReservationRef = platformReservationRef,
-            roomCode = roomCode,
+            roomId = roomCode,
             dateRange = ReservationDateRange(startDate, endDate),
             initiatedBy = RequestInitiator.OTA,
         )
@@ -66,7 +68,7 @@ class ReservationChangeServiceTest(
                 reservationService.book(
                     bookCommand("REF-CHANGE-1", "ROOM-CHANGE-1", LocalDate.of(2028, 6, 1), LocalDate.of(2028, 6, 5)),
                 )
-            val reservationId = requireNotNull(bookResult.reservationId)
+            val reservationCode = requireNotNull(bookResult.reservationCode)
 
             val result =
                 reservationService.change(
@@ -74,11 +76,11 @@ class ReservationChangeServiceTest(
                 )
 
             result.resultStatus shouldBe RequestResultStatus.SUCCESS
-            val savedReservation = reservationRepository.findById(reservationId).orElseThrow()
+            val savedReservation = checkNotNull(reservationRepository.findByReservationCode(reservationCode))
             savedReservation.dateRange.lower() shouldBe LocalDate.of(2028, 7, 1)
             savedReservation.dateRange.upper() shouldBe LocalDate.of(2028, 7, 5)
             outboundNotificationRepository.findAll().count {
-                it.reservationId == reservationId && it.eventType == "RESERVATION_CHANGED"
+                it.reservationCode == reservationCode && it.eventType == "RESERVATION_CHANGED"
             } shouldBe 1
         }
 
@@ -87,7 +89,7 @@ class ReservationChangeServiceTest(
                 reservationService.book(
                     bookCommand("REF-CHANGE-2", "ROOM-CHANGE-2", LocalDate.of(2028, 8, 1), LocalDate.of(2028, 8, 5)),
                 )
-            val reservationId = requireNotNull(bookResult.reservationId)
+            val reservationCode = requireNotNull(bookResult.reservationCode)
 
             // 하루 연장: 새 구간이 기존 구간과 겹치지만, UPDATE 대상 row 자기 자신이므로 exclusion 위반이 아니다.
             val result =
@@ -96,7 +98,7 @@ class ReservationChangeServiceTest(
                 )
 
             result.resultStatus shouldBe RequestResultStatus.SUCCESS
-            val savedReservation = reservationRepository.findById(reservationId).orElseThrow()
+            val savedReservation = checkNotNull(reservationRepository.findByReservationCode(reservationCode))
             savedReservation.dateRange.upper() shouldBe LocalDate.of(2028, 8, 6)
         }
 
@@ -105,7 +107,7 @@ class ReservationChangeServiceTest(
                 reservationService.book(
                     bookCommand("REF-CHANGE-3", "ROOM-CHANGE-3", LocalDate.of(2028, 9, 1), LocalDate.of(2028, 9, 5)),
                 )
-            val reservationId = requireNotNull(bookResult.reservationId)
+            val reservationCode = requireNotNull(bookResult.reservationCode)
             // externalRequestId 없이 같은 초 안에 두 번 호출하면 request_key가 초 단위로 같아져 두 번째
             // 호출이 (서로 다른 변경 시도임에도) 첫 번째의 요청 단위 멱등성에 걸려버린다. 이 테스트는
             // "진짜로 서로 다른 두 번의 성공한 CHANGE"를 검증하려는 것이므로 externalRequestId로 구분한다.
@@ -126,7 +128,7 @@ class ReservationChangeServiceTest(
             secondResult.resultStatus shouldBe RequestResultStatus.SUCCESS
             val changedNotifications =
                 outboundNotificationRepository.findAll().filter {
-                    it.reservationId == reservationId && it.eventType == "RESERVATION_CHANGED"
+                    it.reservationCode == reservationCode && it.eventType == "RESERVATION_CHANGED"
                 }
             changedNotifications shouldHaveSize 2
             changedNotifications.map { it.notificationKey }.toSet() shouldHaveSize 2
@@ -137,7 +139,7 @@ class ReservationChangeServiceTest(
                 reservationService.book(
                     bookCommand("REF-CHANGE-4", "ROOM-CHANGE-4", LocalDate.of(2028, 10, 1), LocalDate.of(2028, 10, 5)),
                 )
-            val reservationId = requireNotNull(bookResult.reservationId)
+            val reservationCode = requireNotNull(bookResult.reservationCode)
             val command =
                 changeCommand("REF-CHANGE-4", LocalDate.of(2028, 11, 1), LocalDate.of(2028, 11, 5), externalRequestId = "EXT-CHANGE-4")
 
@@ -146,9 +148,9 @@ class ReservationChangeServiceTest(
 
             secondResult.id shouldBe firstResult.id
             outboundNotificationRepository.findAll().count {
-                it.reservationId == reservationId && it.eventType == "RESERVATION_CHANGED"
+                it.reservationCode == reservationCode && it.eventType == "RESERVATION_CHANGED"
             } shouldBe 1
-            reservationRequestRepository.findAll().count { it.requestKey == firstResult.requestKey } shouldBe 1
+            reservationLogRepository.findAll().count { it.requestKey == firstResult.requestKey } shouldBe 1
         }
 
         scenario("낙관적 락 충돌이 나도 재시도해 결국 성공한다") {
@@ -156,7 +158,8 @@ class ReservationChangeServiceTest(
                 reservationService.book(
                     bookCommand("REF-CHANGE-5", "ROOM-CHANGE-5", LocalDate.of(2028, 12, 1), LocalDate.of(2028, 12, 5)),
                 )
-            val reservationId = requireNotNull(bookResult.reservationId)
+            val reservationCode = requireNotNull(bookResult.reservationCode)
+            val reservationId = checkNotNull(reservationRepository.findByReservationCode(reservationCode)).id
 
             transactionTemplate.execute {
                 entityManager
@@ -183,7 +186,7 @@ class ReservationChangeServiceTest(
                 reservationService.book(
                     bookCommand("REF-CHANGE-6", "ROOM-CHANGE-6", LocalDate.of(2029, 2, 1), LocalDate.of(2029, 2, 5)),
                 )
-            val reservationId = requireNotNull(targetBookResult.reservationId)
+            val reservationCode = requireNotNull(targetBookResult.reservationCode)
 
             val result =
                 reservationService.change(
@@ -192,11 +195,11 @@ class ReservationChangeServiceTest(
 
             result.resultStatus shouldBe RequestResultStatus.CONFLICT
             result.rejectReason shouldBe "DUPLICATE_BOOKING"
-            val reservationAfterRejection = reservationRepository.findById(reservationId).orElseThrow()
+            val reservationAfterRejection = checkNotNull(reservationRepository.findByReservationCode(reservationCode))
             reservationAfterRejection.dateRange.lower() shouldBe LocalDate.of(2029, 2, 1)
             reservationAfterRejection.dateRange.upper() shouldBe LocalDate.of(2029, 2, 5)
             outboundNotificationRepository.findAll().count {
-                it.reservationId == reservationId && it.eventType == "RESERVATION_REJECTED"
+                it.reservationCode == reservationCode && it.eventType == "RESERVATION_REJECTED"
             } shouldBe 1
         }
 
@@ -204,18 +207,19 @@ class ReservationChangeServiceTest(
             val now = OffsetDateTime.now()
             val pendingReservation =
                 reservationRepository.saveAndFlush(
-                    Reservation(
-                        id = null,
-                        reservationNo = null,
-                        platformId = "OTA_BOOKING",
-                        platformReservationRef = "REF-CHANGE-7",
-                        roomCode = "ROOM-CHANGE-7",
-                        dateRange = ReservationDateRange(LocalDate.of(2029, 3, 1), LocalDate.of(2029, 3, 5)),
-                        status = ReservationStatus.PENDING_CANCEL,
-                        version = 1,
-                        createdAt = now,
-                        updatedAt = now,
-                    ).toEntity(),
+                    ReservationEntity.from(
+                        Reservation(
+                            reservationCode = "",
+                            platformId = "OTA_BOOKING",
+                            platformReservationRef = "REF-CHANGE-7",
+                            roomId = "ROOM-CHANGE-7",
+                            dateRange = ReservationDateRange(LocalDate.of(2029, 3, 1), LocalDate.of(2029, 3, 5)),
+                            status = ReservationStatus.PENDING_CANCEL,
+                            version = 1,
+                            createdAt = now,
+                            updatedAt = now,
+                        ),
+                    ),
                 )
 
             val result =
@@ -225,25 +229,26 @@ class ReservationChangeServiceTest(
 
             result.resultStatus shouldBe RequestResultStatus.FAILED
             result.rejectReason shouldBe "RESERVATION_NOT_CHANGEABLE"
-            outboundNotificationRepository.findAll().count { it.reservationId == pendingReservation.id } shouldBe 0
+            outboundNotificationRepository.findAll().count { it.reservationCode == pendingReservation.reservationCode } shouldBe 0
         }
 
         scenario("CANCELLED 상태의 예약을 변경하려 하면 FAILED로 기록되고 알림을 남기지 않는다") {
             val now = OffsetDateTime.now()
             val cancelledReservation =
                 reservationRepository.saveAndFlush(
-                    Reservation(
-                        id = null,
-                        reservationNo = null,
-                        platformId = "OTA_BOOKING",
-                        platformReservationRef = "REF-CHANGE-8",
-                        roomCode = "ROOM-CHANGE-8",
-                        dateRange = ReservationDateRange(LocalDate.of(2029, 5, 1), LocalDate.of(2029, 5, 5)),
-                        status = ReservationStatus.CANCELLED,
-                        version = 1,
-                        createdAt = now,
-                        updatedAt = now,
-                    ).toEntity(),
+                    ReservationEntity.from(
+                        Reservation(
+                            reservationCode = "",
+                            platformId = "OTA_BOOKING",
+                            platformReservationRef = "REF-CHANGE-8",
+                            roomId = "ROOM-CHANGE-8",
+                            dateRange = ReservationDateRange(LocalDate.of(2029, 5, 1), LocalDate.of(2029, 5, 5)),
+                            status = ReservationStatus.CANCELLED,
+                            version = 1,
+                            createdAt = now,
+                            updatedAt = now,
+                        ),
+                    ),
                 )
 
             val result =
@@ -253,7 +258,7 @@ class ReservationChangeServiceTest(
 
             result.resultStatus shouldBe RequestResultStatus.FAILED
             result.rejectReason shouldBe "RESERVATION_NOT_CHANGEABLE"
-            outboundNotificationRepository.findAll().count { it.reservationId == cancelledReservation.id } shouldBe 0
+            outboundNotificationRepository.findAll().count { it.reservationCode == cancelledReservation.reservationCode } shouldBe 0
         }
 
         scenario("존재하지 않는 예약에 대한 변경 요청은 FAILED로 기록되고 알림을 남기지 않는다") {
@@ -266,7 +271,7 @@ class ReservationChangeServiceTest(
 
             result.resultStatus shouldBe RequestResultStatus.FAILED
             result.rejectReason shouldBe "RESERVATION_NOT_FOUND"
-            result.reservationId.shouldBeNull()
+            result.reservationCode.shouldBeNull()
             outboundNotificationRepository.findAll() shouldHaveSize notificationCountBefore
         }
 

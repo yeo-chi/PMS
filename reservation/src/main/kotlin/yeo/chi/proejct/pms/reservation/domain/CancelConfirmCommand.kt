@@ -1,4 +1,4 @@
-package yeo.chi.proejct.pms.reservation.service
+package yeo.chi.proejct.pms.reservation.domain
 
 data class CancelConfirmCommand(
     val platformId: String,

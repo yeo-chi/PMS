@@ -1,8 +1,9 @@
-package yeo.chi.proejct.pms.reservation.persistent
+package yeo.chi.proejct.pms.reservation.persistent.repository
 
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import yeo.chi.proejct.pms.reservation.persistent.entity.OutboundNotificationEntity
 import java.time.OffsetDateTime
 
 interface OutboundNotificationRepository : JpaRepository<OutboundNotificationEntity, Long> {

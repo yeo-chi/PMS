@@ -8,9 +8,9 @@ import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.client.RestClient
 import yeo.chi.proejct.pms.reservation.configuration.OutboundNotificationDispatchProperties
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
-import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationEntity
-import yeo.chi.proejct.pms.reservation.persistent.OutboundNotificationRepository
-import yeo.chi.proejct.pms.reservation.persistent.ReservationRepository
+import yeo.chi.proejct.pms.reservation.persistent.entity.OutboundNotificationEntity
+import yeo.chi.proejct.pms.reservation.persistent.repository.OutboundNotificationRepository
+import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationRepository
 import java.time.OffsetDateTime
 
 private const val INBOUND_EVENTS_PATH = "/api/inbound-events"
@@ -76,9 +76,9 @@ class OutboundNotificationDispatchWorker(
     // 없어 DB에서 reservation_no를 조회할 수 없으므로, 발행 시점에 payload 안에 담아둔 reservationNo를
     // 그대로 읽는다(ReservationService.rejectedNotificationEntity 참고).
     private fun resolveReservationNo(notification: OutboundNotificationEntity): String {
-        val reservationId = notification.reservationId
-        return if (reservationId != null) {
-            requireNotNull(reservationRepository.findById(reservationId).orElseThrow().reservationNo) {
+        val reservationCode = notification.reservationCode
+        return if (reservationCode != null) {
+            requireNotNull(reservationRepository.findByReservationCode(reservationCode)?.reservationCode) {
                 "저장된 예약은 reservation_no를 가지고 있어야 합니다"
             }
         } else {

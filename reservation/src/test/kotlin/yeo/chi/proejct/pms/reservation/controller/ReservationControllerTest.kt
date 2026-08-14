@@ -10,9 +10,14 @@ import org.springframework.test.web.servlet.ResultActions
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import yeo.chi.proejct.pms.reservation.controller.data.BookReservationRequest
+import yeo.chi.proejct.pms.reservation.controller.data.CancelConfirmRequest
+import yeo.chi.proejct.pms.reservation.controller.data.CancelRequestRequestBody
+import yeo.chi.proejct.pms.reservation.controller.data.ChangeReservationRequest
 import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.persistent.PostgresIntegrationTest
+import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationRepository
 import java.time.LocalDate
 
 @SpringBootTest
@@ -20,6 +25,7 @@ import java.time.LocalDate
 class ReservationControllerTest(
     @Autowired private val mockMvc: MockMvc,
     @Autowired private val objectMapper: ObjectMapper,
+    @Autowired private val reservationRepository: ReservationRepository,
 ) : PostgresIntegrationTest({
 
     fun book(
@@ -46,6 +52,8 @@ class ReservationControllerTest(
                 ),
         )
 
+    // cancel-request 엔드포인트는 URL 경로에 내부 PK(Long)를 쓰지만, BOOK 응답 바디는 논리 키인
+    // reservationCode(String)만 돌려준다 — 응답으로 받은 reservationCode로 다시 조회해 내부 PK를 얻는다.
     fun bookedReservationId(
         platformReservationRef: String,
         roomCode: String,
@@ -53,7 +61,8 @@ class ReservationControllerTest(
         endDate: LocalDate,
     ): Long {
         val response = book(platformReservationRef, roomCode, startDate, endDate).andReturn().response
-        return objectMapper.readTree(response.contentAsString).get("reservationId").asLong()
+        val reservationCode = objectMapper.readTree(response.contentAsString).get("reservationCode").asText()
+        return checkNotNull(reservationRepository.findByReservationCode(reservationCode)).id
     }
 
     fun cancelRequest(
@@ -109,7 +118,7 @@ class ReservationControllerTest(
             book("REF-CTRL-BOOK-1", "ROOM-CTRL-BOOK-1", LocalDate.of(2031, 1, 1), LocalDate.of(2031, 1, 5))
                 .andExpect(status().isCreated)
                 .andExpect(jsonPath("$.resultStatus").value("SUCCESS"))
-                .andExpect(jsonPath("$.reservationId").isNumber)
+                .andExpect(jsonPath("$.reservationCode").isString)
         }
 
         scenario("같은 room_code에 겹치는 날짜로 요청하면 409와 DUPLICATE_BOOKING을 반환한다") {

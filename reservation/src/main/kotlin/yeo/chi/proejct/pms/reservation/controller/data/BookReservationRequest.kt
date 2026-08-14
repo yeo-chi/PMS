@@ -1,11 +1,11 @@
-package yeo.chi.proejct.pms.reservation.controller
+package yeo.chi.proejct.pms.reservation.controller.data
 
 import jakarta.validation.constraints.AssertTrue
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
-import yeo.chi.proejct.pms.reservation.service.BookReservationCommand
+import yeo.chi.proejct.pms.reservation.domain.BookReservationCommand
 import java.time.LocalDate
 
 data class BookReservationRequest(
@@ -25,7 +25,7 @@ fun BookReservationRequest.toCommand(): BookReservationCommand =
     BookReservationCommand(
         platformId = platformId,
         platformReservationRef = platformReservationRef,
-        roomCode = roomCode,
+        roomId = roomCode,
         dateRange = ReservationDateRange(requireNotNull(startDate), requireNotNull(endDate)),
         initiatedBy = requireNotNull(initiatedBy),
     )
