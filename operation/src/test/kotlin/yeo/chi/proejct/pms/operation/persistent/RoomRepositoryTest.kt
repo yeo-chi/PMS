@@ -8,6 +8,7 @@ import yeo.chi.proejct.pms.operation.domain.Host
 import yeo.chi.proejct.pms.operation.domain.HostStatus
 import yeo.chi.proejct.pms.operation.domain.Room
 import yeo.chi.proejct.pms.operation.domain.RoomStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.RoomEntity
 import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
 import yeo.chi.proejct.pms.operation.persistent.repository.RoomRepository
@@ -35,34 +36,31 @@ class RoomRepositoryTest(
             ).id
 
     fun newRoom(
-        roomCode: String,
+        roomId: String,
         hostId: Long,
     ): Room =
         Room(
-            id = null,
-            roomId = roomCode,
+            roomId = roomId,
             hostId = hostId,
             name = "디럭스 룸",
             address = "서울시 어딘가",
             capacity = 2,
             status = RoomStatus.ACTIVE,
-            createdAt = null,
-            updatedAt = null,
         )
 
     feature("Room 저장/조회") {
-        scenario("동일한 room_code로 재삽입하면 저장이 거부된다") {
+        scenario("동일한 room_id로 재삽입하면 저장이 거부된다") {
             val hostId = savedHostId()
-            roomRepository.saveAndFlush(newRoom("ROOM-DUP", hostId).toEntity())
+            roomRepository.saveAndFlush(RoomEntity.from(newRoom("ROOM-DUP", hostId)))
 
             shouldThrow<DataIntegrityViolationException> {
-                roomRepository.saveAndFlush(newRoom("ROOM-DUP", hostId).toEntity())
+                roomRepository.saveAndFlush(RoomEntity.from(newRoom("ROOM-DUP", hostId)))
             }
         }
 
         scenario("존재하지 않는 host_id로 저장하면 FK 제약 위반으로 거부된다") {
             shouldThrow<DataIntegrityViolationException> {
-                roomRepository.saveAndFlush(newRoom("ROOM-NO-HOST", hostId = -1L).toEntity())
+                roomRepository.saveAndFlush(RoomEntity.from(newRoom("ROOM-NO-HOST", hostId = -1L)))
             }
         }
     }

@@ -15,10 +15,11 @@
 -- 1. hosts : 호스트(숙소 운영 주체) 마스터
 -- ---------------------------------------------------------------------
 CREATE TABLE hosts (
-    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,     -- 내부 기술 PK
+    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,     -- 내부 기술 PK (애플리케이션에서는 참조하지 않음)
 
-    -- 논리적 유니크 ID: 사업자등록번호 등 업무적으로 유일함이 보장되는 호스트 사업자 코드
-    host_code            VARCHAR(64) NOT NULL,
+    -- 논리적 유니크 ID이자 애플리케이션이 실제로 사용하는 유일한 식별자.
+    -- 사업자등록번호 등 업무적으로 유일함이 보장되는 호스트 사업자 코드
+    host_id              VARCHAR(64) NOT NULL,
 
     name                 VARCHAR(200) NOT NULL,
     contact_email        VARCHAR(200),
@@ -29,7 +30,7 @@ CREATE TABLE hosts (
     updated_at              DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                          ON UPDATE CURRENT_TIMESTAMP(6),
 
-    UNIQUE KEY uq_host_code (host_code)
+    UNIQUE KEY uq_host_id (host_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -65,14 +66,15 @@ CREATE TABLE ota_channels (
 
 
 -- ---------------------------------------------------------------------
--- 3. rooms : 상품(객실) 마스터. 예약 서버의 reservations.room_code 가 이 room_code 를 참조 (교차 DB, FK 미설정)
+-- 3. rooms : 상품(객실) 마스터. 예약 서버의 reservations.room_code 가 이 room_id 를 참조 (교차 DB, FK 미설정)
 -- ---------------------------------------------------------------------
 CREATE TABLE rooms (
-    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,     -- 내부 기술 PK
+    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,     -- 내부 기술 PK (애플리케이션에서는 참조하지 않음)
 
-    -- 논리적 유니크 ID: 호스트 내에서 방을 구분하는 코드를 조합한 전역 유니크 코드
+    -- 논리적 유니크 ID이자 애플리케이션이 실제로 사용하는 유일한 식별자.
+    -- 호스트 내에서 방을 구분하는 코드를 조합한 전역 유니크 코드
     -- 예: host_code + '-' + 호스트가 관리하는 방 고유 코드(room_local_code)
-    room_code             VARCHAR(80) NOT NULL,
+    room_id               VARCHAR(80) NOT NULL,
 
     host_id                BIGINT NOT NULL,                     -- 내부 FK (조인용)
     name                    VARCHAR(200) NOT NULL,
@@ -85,7 +87,7 @@ CREATE TABLE rooms (
     updated_at                 DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                          ON UPDATE CURRENT_TIMESTAMP(6),
 
-    UNIQUE KEY uq_room_code (room_code),
+    UNIQUE KEY uq_room_id (room_id),
     CONSTRAINT fk_rooms_host FOREIGN KEY (host_id) REFERENCES hosts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -102,7 +104,7 @@ CREATE TABLE room_channel_listings (
     listing_key             VARCHAR(200)
                          GENERATED ALWAYS AS (CONCAT(platform_id, ':', external_product_id)) STORED,
 
-    room_id                  BIGINT NOT NULL,                   -- 내부 FK (조인용)
+    room_id                  VARCHAR(80) NOT NULL,               -- rooms.room_id 참조 (기술 PK가 아닌 논리적 ID로 조인)
     ota_channel_id             BIGINT NOT NULL,                 -- 내부 FK (조인용)
     platform_id                 VARCHAR(64) NOT NULL,
     external_product_id           VARCHAR(128) NOT NULL,        -- 해당 채널에서 이 방을 부르는 상품 ID
@@ -114,7 +116,7 @@ CREATE TABLE room_channel_listings (
                          ON UPDATE CURRENT_TIMESTAMP(6),
 
     UNIQUE KEY uq_listing_key (listing_key),
-    CONSTRAINT fk_listing_room FOREIGN KEY (room_id) REFERENCES rooms(id),
+    CONSTRAINT fk_listing_room FOREIGN KEY (room_id) REFERENCES rooms(room_id),
     CONSTRAINT fk_listing_channel FOREIGN KEY (ota_channel_id) REFERENCES ota_channels(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

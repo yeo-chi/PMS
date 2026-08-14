@@ -30,6 +30,7 @@ import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
 import yeo.chi.proejct.pms.operation.persistent.MySqlIntegrationTest
 import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
 import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
+import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
 import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import java.io.IOException
 import java.time.LocalDateTime
@@ -98,20 +99,19 @@ class OutboxEventDispatchWorkerTest(
     ): Long =
         outboxEventRepository
             .saveAndFlush(
-                OutboxEvent(
-                    id = null,
-                    outboxKey = outboxKey,
-                    targetType = targetType,
-                    targetCode = targetCode,
-                    reservationNo = "OTA_BOOKING:REF-1",
-                    eventType = "RESERVATION_CONFIRMED",
-                    payload = """{"roomCode":"ROOM-101"}""",
-                    status = OutboxEventStatus.PENDING,
-                    retryCount = retryCount,
-                    nextRetryAt = nextRetryAt,
-                    createdAt = null,
-                    updatedAt = null,
-                ).toEntity(),
+                OutboxEventEntity.from(
+                    OutboxEvent(
+                        outboxKey = outboxKey,
+                        targetType = targetType,
+                        targetCode = targetCode,
+                        reservationNo = "OTA_BOOKING:REF-1",
+                        eventType = "RESERVATION_CONFIRMED",
+                        payload = """{"roomCode":"ROOM-101"}""",
+                        status = OutboxEventStatus.PENDING,
+                        retryCount = retryCount,
+                        nextRetryAt = nextRetryAt,
+                    ),
+                ),
             ).id
 
     // MockRestServiceServer의 기대(expectation)는 1회성이라, 시나리오마다 새 워커+새 mock 서버를 만든다.

@@ -1,6 +1,11 @@
 package yeo.chi.proejct.pms.operation.persistent.entity
 
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.GenerationType
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 import org.hibernate.annotations.Generated
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.generator.EventType
@@ -13,7 +18,7 @@ import java.time.LocalDateTime
 class InboundEventEntity(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    val id: Long,
+    val id: Long = 0,
     @Column(name = "notification_key")
     val notificationKey: String,
     @Column(name = "reservation_no")
@@ -26,24 +31,24 @@ class InboundEventEntity(
     @Column(name = "received_at", insertable = false, updatable = false)
     @Generated(event = [EventType.INSERT])
     val receivedAt: LocalDateTime?,
-)
+) {
+    companion object {
+        fun from(inboundEvent: InboundEvent) =
+            InboundEventEntity(
+                notificationKey = inboundEvent.notificationKey,
+                reservationNo = inboundEvent.reservationNo,
+                eventType = inboundEvent.eventType,
+                payload = inboundEvent.payload,
+                receivedAt = LocalDateTime.now(),
+            )
+    }
 
-fun InboundEventEntity.toDomain(): InboundEvent =
-    InboundEvent(
-        id = id,
-        notificationKey = notificationKey,
-        reservationNo = reservationNo,
-        eventType = eventType,
-        payload = payload,
-        receivedAt = receivedAt,
-    )
-
-fun InboundEvent.toEntity(): InboundEventEntity =
-    InboundEventEntity(
-        id = id ?: 0,
-        notificationKey = notificationKey,
-        reservationNo = reservationNo,
-        eventType = eventType,
-        payload = payload,
-        receivedAt = receivedAt,
-    )
+    fun toDomain() =
+        InboundEvent(
+            notificationKey = notificationKey,
+            reservationNo = reservationNo,
+            eventType = eventType,
+            payload = payload,
+            receivedAt = receivedAt,
+        )
+}

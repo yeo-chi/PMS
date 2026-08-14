@@ -14,6 +14,8 @@ import yeo.chi.proejct.pms.operation.domain.Room
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListing
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
 import yeo.chi.proejct.pms.operation.domain.RoomStatus
+import yeo.chi.proejct.pms.operation.persistent.entity.RoomChannelListingEntity
+import yeo.chi.proejct.pms.operation.persistent.entity.RoomEntity
 import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import yeo.chi.proejct.pms.operation.persistent.repository.HostRepository
 import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
@@ -29,13 +31,13 @@ class RoomChannelListingRepositoryTest(
     private val roomChannelListingRepository: RoomChannelListingRepository,
 ) : MySqlIntegrationTest({
 
-    fun savedRoomId(roomCode: String): Long {
+    fun savedRoomId(roomId: String): String {
         val hostId =
             hostRepository
                 .saveAndFlush(
                     Host(
                         id = null,
-                        hostId = "HOST-LISTING-$roomCode",
+                        hostId = "HOST-LISTING-$roomId",
                         name = "호스트 이름",
                         contactEmail = null,
                         contactPhone = null,
@@ -46,18 +48,17 @@ class RoomChannelListingRepositoryTest(
                 ).id
         return roomRepository
             .saveAndFlush(
-                Room(
-                    id = null,
-                    roomId = roomCode,
-                    hostId = hostId,
-                    name = "디럭스 룸",
-                    address = null,
-                    capacity = null,
-                    status = RoomStatus.ACTIVE,
-                    createdAt = null,
-                    updatedAt = null,
-                ).toEntity(),
-            ).id
+                RoomEntity.from(
+                    Room(
+                        roomId = roomId,
+                        hostId = hostId,
+                        name = "디럭스 룸",
+                        address = null,
+                        capacity = null,
+                        status = RoomStatus.ACTIVE,
+                    ),
+                ),
+            ).roomId
     }
 
     fun savedOtaChannelId(platformId: String): Long =
@@ -77,21 +78,18 @@ class RoomChannelListingRepositoryTest(
             ).id
 
     fun newListing(
-        roomId: Long,
+        roomId: String,
         otaChannelId: Long,
         platformId: String,
         externalProductId: String,
     ): RoomChannelListing =
         RoomChannelListing(
-            id = null,
             listingKey = null,
             roomId = roomId,
             otaChannelId = otaChannelId,
             platformId = platformId,
             externalProductId = externalProductId,
             status = RoomChannelListingStatus.ACTIVE,
-            createdAt = null,
-            updatedAt = null,
         )
 
     feature("RoomChannelListing 저장/조회") {
@@ -101,7 +99,7 @@ class RoomChannelListingRepositoryTest(
 
             val saved =
                 roomChannelListingRepository.saveAndFlush(
-                    newListing(roomId, otaChannelId, "OTA_LISTING_1", "EXT-PRODUCT-1").toEntity(),
+                    RoomChannelListingEntity.from(newListing(roomId, otaChannelId, "OTA_LISTING_1", "EXT-PRODUCT-1")),
                 )
 
             saved.listingKey shouldBe "OTA_LISTING_1:EXT-PRODUCT-1"
@@ -112,12 +110,12 @@ class RoomChannelListingRepositoryTest(
             val roomId2 = savedRoomId("ROOM-LISTING-DUP-2")
             val otaChannelId = savedOtaChannelId("OTA_LISTING_DUP")
             roomChannelListingRepository.saveAndFlush(
-                newListing(roomId1, otaChannelId, "OTA_LISTING_DUP", "EXT-PRODUCT-DUP").toEntity(),
+                RoomChannelListingEntity.from(newListing(roomId1, otaChannelId, "OTA_LISTING_DUP", "EXT-PRODUCT-DUP")),
             )
 
             shouldThrow<DataIntegrityViolationException> {
                 roomChannelListingRepository.saveAndFlush(
-                    newListing(roomId2, otaChannelId, "OTA_LISTING_DUP", "EXT-PRODUCT-DUP").toEntity(),
+                    RoomChannelListingEntity.from(newListing(roomId2, otaChannelId, "OTA_LISTING_DUP", "EXT-PRODUCT-DUP")),
                 )
             }
         }
@@ -127,7 +125,9 @@ class RoomChannelListingRepositoryTest(
 
             shouldThrow<DataIntegrityViolationException> {
                 roomChannelListingRepository.saveAndFlush(
-                    newListing(roomId = -1L, otaChannelId, "OTA_LISTING_NO_ROOM", "EXT-PRODUCT-X").toEntity(),
+                    RoomChannelListingEntity.from(
+                        newListing(roomId = "ROOM-DOES-NOT-EXIST", otaChannelId, "OTA_LISTING_NO_ROOM", "EXT-PRODUCT-X"),
+                    ),
                 )
             }
         }
@@ -137,7 +137,9 @@ class RoomChannelListingRepositoryTest(
 
             shouldThrow<DataIntegrityViolationException> {
                 roomChannelListingRepository.saveAndFlush(
-                    newListing(roomId, otaChannelId = -1L, "OTA_LISTING_NO_CHANNEL", "EXT-PRODUCT-Y").toEntity(),
+                    RoomChannelListingEntity.from(
+                        newListing(roomId, otaChannelId = -1L, "OTA_LISTING_NO_CHANNEL", "EXT-PRODUCT-Y"),
+                    ),
                 )
             }
         }

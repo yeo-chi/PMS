@@ -82,7 +82,7 @@ class OutboxEventDispatchWorker(
     // (plan/21.md 6번 결정 사항). 현재 4개 이벤트 타입 중 어느 것도 HOST를 대상으로 만들지 않아
     // 이 분기는 지금은 실행되지 않는다.
     private fun deliverToHost(event: OutboxEventEntity): Boolean {
-        hostRepository.findByHostCode(event.targetCode) ?: return false
+        hostRepository.findByHostId(event.targetCode) ?: return false
         logger.info(
             "[STUB] HOST 알림: outboxKey={}, targetCode={}, eventType={}",
             event.outboxKey,

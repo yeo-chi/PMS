@@ -8,7 +8,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import yeo.chi.proejct.pms.operation.domain.OutboxEvent
 import yeo.chi.proejct.pms.operation.domain.OutboxEventStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxTargetType
-import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
 import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
 import java.time.LocalDateTime
 
@@ -21,7 +21,6 @@ class OutboxEventRepositoryTest(
     fun newOutboxEvent(outboxKey: String): OutboxEvent {
         val now = LocalDateTime.now()
         return OutboxEvent(
-            id = null,
             outboxKey = outboxKey,
             targetType = OutboxTargetType.OTA_CHANNEL,
             targetCode = "OTA_BOOKING",
@@ -31,14 +30,12 @@ class OutboxEventRepositoryTest(
             status = OutboxEventStatus.PENDING,
             retryCount = 0,
             nextRetryAt = now,
-            createdAt = null,
-            updatedAt = null,
         )
     }
 
     feature("OutboxEvent 저장/조회") {
         scenario("저장 후 outbox_key로 조회할 수 있다") {
-            outboxEventRepository.saveAndFlush(newOutboxEvent("OUTBOX-1").toEntity())
+            outboxEventRepository.saveAndFlush(OutboxEventEntity.from(newOutboxEvent("OUTBOX-1")))
 
             val found = outboxEventRepository.findByOutboxKey("OUTBOX-1")
 
@@ -46,10 +43,10 @@ class OutboxEventRepositoryTest(
         }
 
         scenario("동일한 outbox_key로 재삽입하면 저장이 거부된다") {
-            outboxEventRepository.saveAndFlush(newOutboxEvent("OUTBOX-DUP").toEntity())
+            outboxEventRepository.saveAndFlush(OutboxEventEntity.from(newOutboxEvent("OUTBOX-DUP")))
 
             shouldThrow<DataIntegrityViolationException> {
-                outboxEventRepository.saveAndFlush(newOutboxEvent("OUTBOX-DUP").toEntity())
+                outboxEventRepository.saveAndFlush(OutboxEventEntity.from(newOutboxEvent("OUTBOX-DUP")))
             }
         }
     }

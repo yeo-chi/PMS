@@ -10,8 +10,13 @@ import yeo.chi.proejct.pms.operation.domain.InboundEvent
 import yeo.chi.proejct.pms.operation.domain.OtaChannelStatus
 import yeo.chi.proejct.pms.operation.domain.OutboxEvent
 import yeo.chi.proejct.pms.operation.domain.RoomChannelListingStatus
-import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
-import yeo.chi.proejct.pms.operation.persistent.repository.*
+import yeo.chi.proejct.pms.operation.persistent.entity.InboundEventEntity
+import yeo.chi.proejct.pms.operation.persistent.entity.OutboxEventEntity
+import yeo.chi.proejct.pms.operation.persistent.repository.InboundEventRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomChannelListingRepository
+import yeo.chi.proejct.pms.operation.persistent.repository.RoomRepository
 
 
 @Service
@@ -45,7 +50,7 @@ class InboundEventService(
             val payloadJson = request.payload
             val inboundEvent = request.toDomain(objectMapper)
 
-            inboundEventRepository.saveAndFlush(inboundEvent.toEntity())
+            inboundEventRepository.saveAndFlush(InboundEventEntity.from(inboundEvent))
 
             // 교차 DB라 조인이 불가능하므로, 대상 판정에 필요한 정보는 예약 서버가 payload에 미리
             // 담아 보낸 것을 그대로 쓴다. 4개 이벤트 타입 모두 통보 대상은 항상 그 예약을 소유한
@@ -55,7 +60,7 @@ class InboundEventService(
                     "payload에 platformId가 없습니다: notificationKey=${request.notificationKey}"
                 }
 
-            outboxEventRepository.saveAndFlush(OutboxEvent.of(inboundEvent, platformId).toEntity())
+            outboxEventRepository.saveAndFlush(OutboxEventEntity.from(OutboxEvent.of(inboundEvent, platformId)))
 
             FAN_OUT_EVENT_TYPE_BY_SOURCE[request.eventType]?.let { fanOutEventType ->
                 fanOutToOtherChannels(inboundEvent, payloadJson, platformId, fanOutEventType)
@@ -76,7 +81,7 @@ class InboundEventService(
         // 방 마스터 데이터가 아직 없으면(이 프로젝트에 마스터 데이터 등록 API가 없어 흔히 있을 수 있는
         // 상태) 팬아웃 대상도 없다는 뜻이므로 조용히 건너뛴다 — 원본 통보(이벤트를 발생시킨 채널
         // 대상)는 이미 저장됐으니 실패로 처리하지 않는다.
-        val room = roomRepository.findByRoomCode(roomCode) ?: return
+        val room = roomRepository.findByRoomId(roomCode) ?: return
 
         getRoomChannelListings(room.roomId)
             .filter { it.status == RoomChannelListingStatus.ACTIVE && it.platformId != originatingPlatformId }
@@ -86,7 +91,7 @@ class InboundEventService(
             .filter { listing -> otaChannelRepository.findByPlatformId(listing.platformId)?.status == OtaChannelStatus.ACTIVE }
             .forEach { listing ->
                 outboxEventRepository.saveAndFlush(
-                    OutboxEvent.ofB(inboundEvent, listing, fanOutEventType).toEntity()
+                    OutboxEventEntity.from(OutboxEvent.ofB(inboundEvent, listing, fanOutEventType)),
                 )
             }
     }

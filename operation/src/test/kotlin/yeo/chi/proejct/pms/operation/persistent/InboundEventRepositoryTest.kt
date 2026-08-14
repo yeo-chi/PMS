@@ -6,7 +6,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.dao.DataIntegrityViolationException
 import yeo.chi.proejct.pms.operation.domain.InboundEvent
-import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
+import yeo.chi.proejct.pms.operation.persistent.entity.InboundEventEntity
 import yeo.chi.proejct.pms.operation.persistent.repository.InboundEventRepository
 
 @DataJpaTest
@@ -17,7 +17,6 @@ class InboundEventRepositoryTest(
 
     fun newInboundEvent(notificationKey: String): InboundEvent =
         InboundEvent(
-            id = null,
             notificationKey = notificationKey,
             reservationNo = "OTA_BOOKING:REF-1",
             eventType = "RESERVATION_CONFIRMED",
@@ -27,7 +26,7 @@ class InboundEventRepositoryTest(
 
     feature("InboundEvent 저장/조회") {
         scenario("저장 후 notification_key로 조회할 수 있다") {
-            inboundEventRepository.saveAndFlush(newInboundEvent("NOTIFY-1").toEntity())
+            inboundEventRepository.saveAndFlush(InboundEventEntity.from(newInboundEvent("NOTIFY-1")))
 
             val found = inboundEventRepository.findByNotificationKey("NOTIFY-1")
 
@@ -35,10 +34,10 @@ class InboundEventRepositoryTest(
         }
 
         scenario("동일한 notification_key로 재삽입하면 저장이 거부된다") {
-            inboundEventRepository.saveAndFlush(newInboundEvent("NOTIFY-DUP").toEntity())
+            inboundEventRepository.saveAndFlush(InboundEventEntity.from(newInboundEvent("NOTIFY-DUP")))
 
             shouldThrow<DataIntegrityViolationException> {
-                inboundEventRepository.saveAndFlush(newInboundEvent("NOTIFY-DUP").toEntity())
+                inboundEventRepository.saveAndFlush(InboundEventEntity.from(newInboundEvent("NOTIFY-DUP")))
             }
         }
     }

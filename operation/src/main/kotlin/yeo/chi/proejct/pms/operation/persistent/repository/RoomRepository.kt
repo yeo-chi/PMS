@@ -6,5 +6,5 @@ import yeo.chi.proejct.pms.operation.persistent.entity.RoomEntity
 
 @Repository
 interface RoomRepository : JpaRepository<RoomEntity, Long> {
-    fun findByRoomCode(roomCode: String): RoomEntity?
+    fun findByRoomId(roomId: String): RoomEntity?
 }

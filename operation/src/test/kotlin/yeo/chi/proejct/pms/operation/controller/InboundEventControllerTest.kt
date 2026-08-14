@@ -28,6 +28,8 @@ import yeo.chi.proejct.pms.operation.persistent.repository.OtaChannelRepository
 import yeo.chi.proejct.pms.operation.persistent.repository.OutboxEventRepository
 import yeo.chi.proejct.pms.operation.persistent.repository.RoomChannelListingRepository
 import yeo.chi.proejct.pms.operation.persistent.repository.RoomRepository
+import yeo.chi.proejct.pms.operation.persistent.entity.RoomChannelListingEntity
+import yeo.chi.proejct.pms.operation.persistent.entity.RoomEntity
 import yeo.chi.proejct.pms.operation.persistent.entity.toEntity
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -70,7 +72,7 @@ class InboundEventControllerTest(
         """.trimIndent()
     }
 
-    fun savedRoomId(roomCode: String): Long {
+    fun savedRoomId(roomCode: String): String {
         val hostId =
             hostRepository
                 .saveAndFlush(
@@ -87,18 +89,17 @@ class InboundEventControllerTest(
                 ).id
         return roomRepository
             .saveAndFlush(
-                Room(
-                    id = null,
-                    roomId = roomCode,
-                    hostId = hostId,
-                    name = "디럭스 룸",
-                    address = null,
-                    capacity = null,
-                    status = RoomStatus.ACTIVE,
-                    createdAt = null,
-                    updatedAt = null,
-                ).toEntity(),
-            ).id
+                RoomEntity.from(
+                    Room(
+                        roomId = roomCode,
+                        hostId = hostId,
+                        name = "디럭스 룸",
+                        address = null,
+                        capacity = null,
+                        status = RoomStatus.ACTIVE,
+                    ),
+                ),
+            ).roomId
     }
 
     fun savedOtaChannelId(
@@ -121,23 +122,22 @@ class InboundEventControllerTest(
             ).id
 
     fun savedListing(
-        roomId: Long,
+        roomId: String,
         otaChannelId: Long,
         platformId: String,
         status: RoomChannelListingStatus = RoomChannelListingStatus.ACTIVE,
     ) {
         roomChannelListingRepository.saveAndFlush(
-            RoomChannelListing(
-                id = null,
-                listingKey = null,
-                roomId = roomId,
-                otaChannelId = otaChannelId,
-                platformId = platformId,
-                externalProductId = "EXT-$platformId",
-                status = status,
-                createdAt = null,
-                updatedAt = null,
-            ).toEntity(),
+            RoomChannelListingEntity.from(
+                RoomChannelListing(
+                    listingKey = null,
+                    roomId = roomId,
+                    otaChannelId = otaChannelId,
+                    platformId = platformId,
+                    externalProductId = "EXT-$platformId",
+                    status = status,
+                ),
+            ),
         )
     }
 

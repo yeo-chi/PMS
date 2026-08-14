@@ -6,5 +6,5 @@ import yeo.chi.proejct.pms.operation.persistent.entity.HostEntity
 
 @Repository
 interface HostRepository : JpaRepository<HostEntity, Long> {
-    fun findByHostCode(hostCode: String): HostEntity?
+    fun findByHostId(hostId: String): HostEntity?
 }

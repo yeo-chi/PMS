@@ -1,6 +1,13 @@
 package yeo.chi.proejct.pms.operation.persistent.entity
 
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.GenerationType
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 import org.hibernate.annotations.Generated
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.generator.EventType
@@ -15,7 +22,7 @@ import java.time.LocalDateTime
 class OutboxEventEntity(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    val id: Long,
+    val id: Long = 0,
     @Column(name = "outbox_key")
     val outboxKey: String,
     @Enumerated(EnumType.STRING)
@@ -43,36 +50,34 @@ class OutboxEventEntity(
     @Column(name = "updated_at", insertable = false, updatable = false)
     @Generated(event = [EventType.INSERT, EventType.UPDATE])
     val updatedAt: LocalDateTime?,
-)
+) {
+    companion object {
+        fun from(outboxEvent: OutboxEvent) =
+            OutboxEventEntity(
+                outboxKey = outboxEvent.outboxKey,
+                targetType = outboxEvent.targetType,
+                targetCode = outboxEvent.targetCode,
+                reservationNo = outboxEvent.reservationNo,
+                eventType = outboxEvent.eventType,
+                payload = outboxEvent.payload,
+                status = outboxEvent.status,
+                retryCount = outboxEvent.retryCount,
+                nextRetryAt = outboxEvent.nextRetryAt,
+                createdAt = LocalDateTime.now(),
+                updatedAt = LocalDateTime.now(),
+            )
+    }
 
-fun OutboxEventEntity.toDomain(): OutboxEvent =
-    OutboxEvent(
-        id = id,
-        outboxKey = outboxKey,
-        targetType = targetType,
-        targetCode = targetCode,
-        reservationNo = reservationNo,
-        eventType = eventType,
-        payload = payload,
-        status = status,
-        retryCount = retryCount,
-        nextRetryAt = nextRetryAt,
-        createdAt = createdAt,
-        updatedAt = updatedAt,
-    )
-
-fun OutboxEvent.toEntity(): OutboxEventEntity =
-    OutboxEventEntity(
-        id = id ?: 0,
-        outboxKey = outboxKey,
-        targetType = targetType,
-        targetCode = targetCode,
-        reservationNo = reservationNo,
-        eventType = eventType,
-        payload = payload,
-        status = status,
-        retryCount = retryCount,
-        nextRetryAt = nextRetryAt,
-        createdAt = createdAt,
-        updatedAt = updatedAt,
-    )
+    fun toDomain() =
+        OutboxEvent(
+            outboxKey = outboxKey,
+            targetType = targetType,
+            targetCode = targetCode,
+            reservationNo = reservationNo,
+            eventType = eventType,
+            payload = payload,
+            status = status,
+            retryCount = retryCount,
+            nextRetryAt = nextRetryAt,
+        )
+}
