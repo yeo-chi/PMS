@@ -3,7 +3,7 @@
 자사 숙박 상품을 자사 서비스와 다수의 OTA(Booking.com, Agoda 등)에 동시 노출/판매하는 시스템.
 동일 상품이 여러 채널에서 동시에 예약될 수 있으므로, 예약·취소·변경 요청을 **멱등하게, 중복/누락
 없이** 처리하고 채널 간 재고 정합성을 보장하는 것이 핵심 과제다. 전체 도메인 설계는
-[`docs/기획문서.md`](docs/기획문서.md), 실제 흐름은 [`docs.dataflow/`](docs.dataflow/README.md)의
+[`docs/기획문서.md`](docs/기획문서.md), 실제 흐름은 [`docs.dataflow/`](docs/dataflow/README.md)의
 시퀀스 다이어그램을 참고.
 
 ## 기술 스택
