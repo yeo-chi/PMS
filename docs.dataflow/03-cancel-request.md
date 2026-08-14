@@ -14,6 +14,8 @@
 
 ## 1단계 — 호스트 취소요청 → PENDING_CANCEL
 
+다이어그램 소스: [`03-cancel-request-phase1.mermaid`](03-cancel-request-phase1.mermaid)
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -59,6 +61,8 @@ sequenceDiagram
 호스트 취소요청을 전달받은 OTA가 고객과 협의를 마치고 나면, [02-cancel-confirm.md](02-cancel-confirm.md)와
 **완전히 동일한 플로우**로 `POST /api/reservations/cancel-confirm`을 호출한다. `attemptCancelConfirm`은
 `CONFIRMED`와 `PENDING_CANCEL` 둘 다에서 `CANCELLED`로의 전이를 허용하므로 별도 분기가 필요 없다.
+
+다이어그램 소스: [`03-cancel-request-phase2.mermaid`](03-cancel-request-phase2.mermaid)
 
 ```mermaid
 sequenceDiagram

@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    actor Host as 호스트
+    participant RC as ReservationController
+    participant RS as ReservationService
+    participant RDB as reservation DB
+    participant OW as OutboundNotificationDispatchWorker
+    participant IS as operation:InboundEventService
+    participant ODB as operation DB
+    participant XW as OutboxEventDispatchWorker
+    actor OTA as 대상 OTA
+
+    Host->>RC: POST /api/reservations/{id}/cancel-request<br/>{reason}
+    RC->>RS: cancelRequest(command)
+    RS->>RDB: findByRequestKey (멱등 확인) → 없음
+    RS->>RDB: findById(reservationId)
+
+    alt 예약 없음
+        Note over RS: reservation_requests.platform_id가 NOT NULL이라<br/>감사 로그를 남길 수 없음 — WARN 로그만 남기고<br/>합성 FAILED 결과 반환(row 없음)
+        RS-->>Host: 404
+    else 이미 CANCELLED
+        RS->>RDB: INSERT reservation_requests (FAILED,<br/>ALREADY_CANCELLED)
+        RS-->>Host: 409
+    else CONFIRMED
+        RS->>RDB: UPDATE reservations SET status=PENDING_CANCEL<br/>(재고는 계속 점유)
+        RS->>RDB: INSERT reservation_requests (SUCCESS)
+        RS->>RDB: INSERT outbound_notifications<br/>(CANCEL_REQUESTED, 같은 트랜잭션)
+        RS-->>Host: 200
+    else 이미 PENDING_CANCEL
+        RS->>RDB: INSERT reservation_requests (SUCCESS,<br/>재전이 없이 감사 기록만)
+        RS-->>Host: 200
+    end
+
+    Note over OW,OTA: 비동기 — 팬아웃 없음(재고 상태 변화 없음)
+    OW->>IS: POST /api/inbound-events (CANCEL_REQUESTED)
+    IS->>ODB: INSERT inbound_events + outbox_events<br/>(대상: 원 OTA 채널만)
+    XW->>OTA: POST callbackBaseUrl (취소요청 전달)

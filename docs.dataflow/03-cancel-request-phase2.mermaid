@@ -1,0 +1,8 @@
+sequenceDiagram
+    autonumber
+    actor OTA as 대상 OTA
+    participant RS as ReservationService
+
+    Note over OTA,RS: 호스트 취소요청 이후 임의 시점(협의 완료 후)
+    OTA->>RS: cancelConfirm(...) — PENDING_CANCEL → CANCELLED
+    Note over RS: 이후 흐름은 02-cancel-confirm.md와 동일<br/>(RESERVATION_CANCELLED 통보 + INVENTORY_REOPENED 팬아웃)

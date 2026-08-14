@@ -8,6 +8,8 @@
 
 ## 성공 케이스
 
+다이어그램 소스: [`01-book-success.mermaid`](01-book-success.mermaid)
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -50,6 +52,8 @@ sequenceDiagram
 ## 중복예약 거부 케이스 (오버부킹)
 
 같은 `room_code`·겹치는 날짜로 두 요청이 동시에 들어와 GIST 제약을 어느 한쪽이 위반하는 경우.
+
+다이어그램 소스: [`01-book-conflict.mermaid`](01-book-conflict.mermaid)
 
 ```mermaid
 sequenceDiagram
