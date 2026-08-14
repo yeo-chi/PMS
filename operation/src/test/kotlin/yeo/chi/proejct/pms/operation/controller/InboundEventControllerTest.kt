@@ -126,6 +126,7 @@ class InboundEventControllerTest(
         otaChannelId: Long,
         platformId: String,
         status: RoomChannelListingStatus = RoomChannelListingStatus.ACTIVE,
+        externalProductId: String = "EXT-$platformId",
     ) {
         roomChannelListingRepository.saveAndFlush(
             RoomChannelListingEntity.from(
@@ -134,7 +135,7 @@ class InboundEventControllerTest(
                     roomId = roomId,
                     otaChannelId = otaChannelId,
                     platformId = platformId,
-                    externalProductId = "EXT-$platformId",
+                    externalProductId = externalProductId,
                     status = status,
                 ),
             ),
@@ -386,6 +387,32 @@ class InboundEventControllerTest(
                 ).andExpect(status().isOk)
 
             outboxEventRepository.findAll().count { it.reservationNo == reservationNo } shouldBe 1
+        }
+
+        scenario("같은 채널에 서로 다른 상품 코드로 2개 리스팅된 방도 outbox_key 충돌 없이 각각 팬아웃된다") {
+            val roomCode = "ROOM-FANOUT-DUAL-LISTING"
+            val roomId = savedRoomId(roomCode)
+            val originatingChannelId = savedOtaChannelId("OTA6_A")
+            savedListing(roomId, originatingChannelId, "OTA6_A")
+            val otherChannelId = savedOtaChannelId("OTA6_B")
+            savedListing(roomId, otherChannelId, "OTA6_B", externalProductId = "EXT-OTA6_B-1")
+            savedListing(roomId, otherChannelId, "OTA6_B", externalProductId = "EXT-OTA6_B-2")
+            val notificationKey = "NOTIFY-FANOUT-DUAL-LISTING"
+            val reservationNo = "OTA6_A:REF-FANOUT-DUAL-LISTING"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            requestBody(notificationKey, reservationNo, "RESERVATION_CONFIRMED", platformId = "OTA6_A", roomCode = roomCode),
+                        ),
+                ).andExpect(status().isOk)
+
+            val outboxEvents = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
+            outboxEvents shouldHaveSize 3
+            outboxEvents.count { it.targetCode == "OTA6_B" && it.eventType == "INVENTORY_CLOSED" } shouldBe 2
+            outboxEvents.map { it.outboxKey }.toSet() shouldHaveSize 3
         }
 
         listOf("CANCEL_REQUESTED", "RESERVATION_REJECTED").forEach { eventType ->

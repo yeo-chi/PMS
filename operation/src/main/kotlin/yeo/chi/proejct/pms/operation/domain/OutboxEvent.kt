@@ -27,8 +27,14 @@ data class OutboxEvent(
             nextRetryAt = LocalDateTime.now(),
         )
 
+        // 같은 room이 같은 platformId에 서로 다른 externalProductId로 2개 이상 리스팅될 수 있어(스키마상
+        // uq_listing_key가 platformId 단독이 아니라 (platformId, externalProductId) 조합) outboxKey에
+        // externalProductId까지 포함해야 리스팅별로 유일하다 — platformId만으로는 두 리스팅이 같은
+        // 키로 충돌해 두 번째 insert가 DataIntegrityViolationException을 낸다.
         fun ofB(inboundEvent: InboundEvent, listing: RoomChannelListing, eventType: String) = OutboxEvent(
-            outboxKey = "${inboundEvent.reservationNo}:${OutboxTargetType.OTA_CHANNEL}:${listing.platformId}:$eventType",
+            outboxKey =
+                "${inboundEvent.reservationNo}:${OutboxTargetType.OTA_CHANNEL}:" +
+                    "${listing.platformId}:${listing.externalProductId}:$eventType",
             targetType = OutboxTargetType.OTA_CHANNEL,
             targetCode = listing.platformId,
             reservationNo = inboundEvent.reservationNo,

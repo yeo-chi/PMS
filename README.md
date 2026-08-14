@@ -44,3 +44,4 @@
 - **취소통보/예약변경(CANCEL_CONFIRM/CHANGE)**: 채널이 요청 단위로 발급하는 `externalRequestId`가 있으면 그 값으로 정확히 식별하고, 없으면 초 단위 타임스탬프로 폴백한다.
 - **호스트 취소요청(CANCEL_REQUEST)**: 호스트에게는 OTA의 `externalRequestId` 같은 참조값이 원래 없어 초 단위 폴백이 기본이지만, 재요청 테스트를 결정적으로 만들기 위해 선택적 `externalRequestId`를 추가했다. 초 경계 충돌로 멱등키가 겹쳐도 안전하도록, 상태 기반 멱등성(이미 `PENDING_CANCEL`/`CANCELLED`면 재전이 없이 감사 기록만 추가)을 최종 방어선으로 둔다.
 - **서버 간 이벤트 전달(Transactional Outbox)**: 예약 서버의 상태 변경과 `outbound_notifications` insert가 항상 같은 트랜잭션으로 커밋된다. 운영 서버는 이 이벤트를 `notification_key` UNIQUE 제약으로 수신측 멱등성을 보장하며 받아, `inbound_events`에 먼저 기록한 뒤 외부 채널로 보낼 `outbox_events`를 만든다. 두 방향 모두 실패 시 지수 백오프로 재시도하고, `maxRetryCount` 초과 시 DEAD로 전이해 무한 재시도를 막는다.
+- **통보 대상 팬아웃**: 운영 서버는 이벤트 종류에 따라 통보 대상을 나눈다 — 예약 확정/취소확정/변경은 원 채널뿐 아니라 같은 방을 노출 중인 다른 활성 채널에도 재고 변경(마감/오픈/변경) 통보를 함께 발행하고, 예약 변경은 방을 소유한 호스트에게도 별도 통보를 만든다. 세 대상 모두 원본 통보와 같은 트랜잭션에서 `outbox_events`에 append되므로, 한쪽만 기록되고 나머지가 유실되는 상태는 발생하지 않는다.

@@ -40,9 +40,15 @@ class InboundEventService(
         if (inboundEventRepository.findByNotificationKey(request.notificationKey) == null) {
             try {
                 processNew(request)
-            } catch (_: DataIntegrityViolationException) {
-                // uq_notification_key 위반 = 두 요청이 findByNotificationKey를 동시에 통과한 극단적 레이스.
-                // 이미 다른 스레드가 (같은 내용으로) 처리했으므로 재조회 없이 성공으로 간주한다.
+            } catch (raceOrOtherViolation: DataIntegrityViolationException) {
+                // uq_notification_key 위반으로 인한 극단적 레이스(두 요청이 findByNotificationKey를
+                // 동시에 통과)라면, 다른 스레드가 이미 (같은 내용으로) 처리했다는 뜻이라 성공으로 간주해도
+                // 안전하다 — 하지만 재확인 없이 그렇게 단정하면, 팬아웃/호스트 통보 단계의 다른 제약
+                // 위반(예: outbox_key 충돌)으로 트랜잭션 전체가 롤백된 경우까지 성공으로 위장해버려
+                // 통보가 조용히 유실된다(reservation의 recordConflict와 동일한 재확인 패턴).
+                if (inboundEventRepository.findByNotificationKey(request.notificationKey) == null) {
+                    throw raceOrOtherViolation
+                }
             }
         }
     }
