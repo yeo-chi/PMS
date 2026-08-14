@@ -1,0 +1,17 @@
+sequenceDiagram
+    autonumber
+    actor Loser as 늦게 도착한 채널
+    participant RS as ReservationService
+    participant RDB as reservation DB
+    participant OW as OutboundNotificationDispatchWorker
+    participant Ext as Loser 채널(운영 서버 경유)
+
+    Loser->>RS: book(command)
+    RS->>RDB: INSERT reservations 시도
+    RDB--x RS: DataIntegrityViolationException<br/>(excl_room_date_overlap 위반)
+    RS->>RDB: INSERT reservation_requests (CONFLICT,<br/>reject_reason=DUPLICATE_BOOKING)
+    RS->>RDB: INSERT outbound_notifications<br/>(RESERVATION_REJECTED, reservation_id=null,<br/>같은 트랜잭션)
+    RS-->>Loser: CONFLICT (409)
+
+    Note over OW,Ext: 비동기
+    OW->>Ext: (operation 경유) RESERVATION_REJECTED 통보<br/>"중복예약으로 인한 취소"
