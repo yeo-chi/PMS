@@ -15,13 +15,16 @@
 - **DB**: `reservation`은 PostgreSQL 16(`daterange` + GIST exclusion 제약 활용), `operation`은
   MySQL 8(생성 컬럼, `ON UPDATE CURRENT_TIMESTAMP` 활용) — 두 모듈이 서로 다른 RDBMS를 쓰며
   Gradle 컴파일 의존 없이 HTTP로만 통신
-- **스키마 마이그레이션**: Flyway (Hibernate `ddl-auto`에 맡기지 않고 DDL을 명시적으로 관리 —
-  exclusion 제약·생성 컬럼처럼 JPA 매핑만으로 표현 불가능한 것들이 있어서)
+- **스키마 관리**: 마이그레이션 도구 없이 `docs/schema/*.sql`을 유일한 DDL 소스로 관리한다.
+  운영 DB는 DBA가 이 SQL로 직접 스키마를 관리하고, 애플리케이션은 `ddl-auto: validate`로 매핑만
+  검증한다 — exclusion 제약·생성 컬럼처럼 JPA 매핑만으로 표현 불가능한 것들이 있어서 Hibernate
+  자동 생성에 맡기지 않는다.
 - **날짜 범위 매핑**: `hypersistence-utils`(`PostgreSQLRangeType`)로 PostgreSQL `daterange` ↔
   Kotlin `Range<LocalDate>` 매핑
-- **테스트**: Kotest(`FeatureSpec`) + MockK, Testcontainers(PostgreSQL/MySQL 실제 컨테이너로
-  통합 테스트 — DB 벤더 종속 기능은 인메모리 DB로 재현 불가능하므로)
-- **로컬 인프라**: `docker-compose.yml`로 두 DB 컨테이너 기동
+- **테스트**: Kotest(`FeatureSpec`) + MockK, 로컬에 미리 띄워둔 실제 PostgreSQL/MySQL(`reservation_test`
+  / `operation_test`)에 직접 연결해 통합 테스트 — DB 벤더 종속 기능은 인메모리 DB로 재현 불가능하므로
+- **로컬 인프라**: 프로젝트가 DB 컨테이너를 소유하지 않는다. 개발자가 로컬에 PostgreSQL 16 /
+  MySQL 8을 직접 준비(`docker run` 등 무엇이든)하고 `docs/schema/*.sql`을 한 번 적용해두면 됨
 
 ## 동시성 처리 — "다른 채널이 이미 그 방을 잡았는가"
 
