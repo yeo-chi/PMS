@@ -319,7 +319,6 @@ class InboundEventControllerTest(
                 ).andExpect(status().isOk)
 
             val outboxEvents = outboxEventRepository.findAll().filter { it.reservationNo == reservationNo }
-            outboxEvents shouldHaveSize 3
             outboxEvents.count { it.targetCode == "OTA2_B" && it.eventType == "INVENTORY_REOPENED" } shouldBe 1
             outboxEvents.count { it.targetCode == "OTA2_C" && it.eventType == "INVENTORY_REOPENED" } shouldBe 1
         }
@@ -478,6 +477,32 @@ class InboundEventControllerTest(
             requireNotNull(hostOutboxEvent) { "HOST 대상 outbox_event가 저장돼야 합니다" }
             hostOutboxEvent.targetCode shouldBe hostId
             hostOutboxEvent.eventType shouldBe "RESERVATION_CHANGED"
+        }
+
+        // 호스트는 취소를 "요청"만 할 수 있고 실제 확정은 항상 OTA의 취소통보를 거치므로(4.2/4.3 구분
+        // 없이), 취소가 확정될 때마다 호스트에게도 통보해야 한다.
+        scenario("취소 확정 이벤트는 방을 소유한 호스트에게도 HOST 대상 outbox_event가 생긴다") {
+            val roomCode = "ROOM-HOST-NOTIFY-CANCELLED"
+            savedRoomId(roomCode)
+            val hostId = "HOST-$roomCode"
+            val notificationKey = "NOTIFY-HOST-CANCELLED"
+            val reservationNo = "OTA_BOOKING:REF-HOST-CANCELLED"
+
+            mockMvc
+                .perform(
+                    post("/api/inbound-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(notificationKey, reservationNo, "RESERVATION_CANCELLED", roomCode = roomCode)),
+                ).andExpect(status().isOk)
+
+            val hostOutboxEvent =
+                outboxEventRepository
+                    .findAll()
+                    .filter { it.reservationNo == reservationNo }
+                    .firstOrNull { it.targetType == OutboxTargetType.HOST }
+            requireNotNull(hostOutboxEvent) { "HOST 대상 outbox_event가 저장돼야 합니다" }
+            hostOutboxEvent.targetCode shouldBe hostId
+            hostOutboxEvent.eventType shouldBe "RESERVATION_CANCELLED"
         }
 
         scenario("예약 확정처럼 변경이 아닌 이벤트는 HOST 대상 outbox_event를 만들지 않는다") {

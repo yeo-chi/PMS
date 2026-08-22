@@ -57,15 +57,17 @@ class InboundEventService(
             val payloadJson = request.payload
             val inboundEvent = request.toDomain(objectMapper)
 
-            inboundEventRepository.saveAndFlush(InboundEventEntity.from(inboundEvent))
-
             // 교차 DB라 조인이 불가능하므로, 대상 판정에 필요한 정보는 예약 서버가 payload에 미리
             // 담아 보낸 것을 그대로 쓴다. 5개 이벤트 타입 모두 통보 대상은 항상 그 예약을 소유한
             // OTA 채널이다(CANCEL_REQUESTED도 호스트가 시작했을 뿐 통보 대상은 호스트가 아니다).
+            // inboundEventRepository 저장보다 먼저 검증해, payload가 잘못된 경우 불필요한 INSERT
+            // 없이 곧바로 실패한다(어차피 실패하면 트랜잭션 전체가 롤백되므로 결과는 같지만).
             val platformId =
                 requireNotNull(payloadJson.get("platformId")?.asText()) {
                     "payload에 platformId가 없습니다: notificationKey=${request.notificationKey}"
                 }
+
+            inboundEventRepository.saveAndFlush(InboundEventEntity.from(inboundEvent))
 
             outboxEventRepository.saveAndFlush(OutboxEventEntity.primary(inboundEvent, platformId))
 
@@ -108,9 +110,12 @@ class InboundEventService(
     private fun getRoomChannelListings(roomId: String) =
         roomChannelListingRepository.findByRoomId(roomId).map { it.toDomain() }
 
-    // 예약 변경은 호스트 소유 자산의 점유 기간이 바뀌는 일이라 호스트에게도 알려야 한다(기획문서
-    // 4.4). 다른 이벤트 타입은 호스트가 이미 알고 있거나(호스트 본인이 발의한 CANCEL_REQUEST)
-    // 관심 대상이 아니라(BOOK/CANCEL_CONFIRM은 OTA·채널 재고 이슈) 대상에서 제외한다.
+    // 예약 변경/취소 확정은 호스트 소유 자산의 점유 상태가 실제로 바뀌는 일이라 호스트에게도 알려야
+    // 한다. 호스트는 구조적으로 취소를 "요청"만 할 수 있고(CANCEL_REQUEST) 실제 확정은 항상 OTA의
+    // 취소통보를 거쳐야 하므로, 호스트발 취소요청이 확정된 경우(기획문서 4.3)든 OTA가 곧바로 취소한
+    // 경우(4.2)든 호스트는 "확정됐다"는 사실 자체를 별도로 통보받아야 한다 — 전자도 요청 시점엔
+    // 확정 여부를 몰랐고, 후자는 애초에 관여하지 않았기 때문이다. BOOK/거부는 호스트의 운영 계획에
+    // 영향이 없는 OTA·채널 재고 이슈라 대상에서 제외한다.
     private fun notifyHost(
         inboundEvent: InboundEvent,
         payloadJson: JsonNode,
@@ -151,6 +156,6 @@ class InboundEventService(
                 "RESERVATION_CHANGED" to "INVENTORY_CHANGED",
             )
 
-        private val HOST_NOTIFY_EVENT_TYPES = setOf("RESERVATION_CHANGED")
+        private val HOST_NOTIFY_EVENT_TYPES = setOf("RESERVATION_CHANGED", "RESERVATION_CANCELLED")
     }
 }

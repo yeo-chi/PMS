@@ -42,12 +42,12 @@ class ReservationService(
     private fun attemptBook(
         reservation: Reservation,
         requestKey: String,
-    ): ReservationLog =
-        checkNotNull(
+    ): ReservationLog {
+        // reservationCode는 DB가 생성하는 컬럼이라(ReservationEntity의 @Generated), 저장 전
+        // 도메인 객체의 reservationCode는 실제 값이 아닌 placeholder다. reservation_requests/
+        // outbound_notifications가 이 값을 FK로 참조하므로, 저장 후 재조회한 실제 값을 써야 한다.
+        val result =
             transactionTemplate.execute {
-                // reservationCode는 DB가 생성하는 컬럼이라(ReservationEntity의 @Generated), 저장 전
-                // 도메인 객체의 reservationCode는 실제 값이 아닌 placeholder다. reservation_requests/
-                // outbound_notifications가 이 값을 FK로 참조하므로, 저장 후 재조회한 실제 값을 써야 한다.
                 val now = OffsetDateTime.now()
 
                 val reservation =
@@ -63,8 +63,9 @@ class ReservationService(
                 )
 
                 savedRequest.toDomain()
-            },
-        ) { "예약 확정 트랜잭션은 항상 값을 반환해야 합니다" }
+            }
+        return checkNotNull(result) { "예약 확정 트랜잭션은 항상 값을 반환해야 합니다" }
+    }
 
     private fun recordConflict(
         reservation: Reservation,
@@ -74,7 +75,7 @@ class ReservationService(
         // 같은 세션을 재사용해 재조회하면 "세션이 예외 이후에 flush됨" 문제로 이어지므로,
         // 예외를 트랜잭션 바깥으로 흘려보낸 뒤 별도 트랜잭션으로 재조회한다.
         return try {
-            checkNotNull(
+            val result =
                 transactionTemplate.execute {
                     val now = OffsetDateTime.now()
                     val savedRequest =
@@ -89,8 +90,8 @@ class ReservationService(
                     )
 
                     savedRequest.toDomain()
-                },
-            ) { "충돌 기록 트랜잭션은 항상 값을 반환해야 합니다" }
+                }
+            checkNotNull(result) { "충돌 기록 트랜잭션은 항상 값을 반환해야 합니다" }
         } catch (_: DataIntegrityViolationException) {
             checkNotNull(reservationLogRepository.findByRequestKey(requestKey)) {
                 "uq_request_key 위반이면 동일 requestKey row가 반드시 존재해야 합니다"
@@ -128,8 +129,8 @@ class ReservationService(
     private fun attemptCancelConfirm(
         request: CancelConfirmRequest,
         requestKey: String,
-    ): ReservationLog =
-        checkNotNull(
+    ): ReservationLog {
+        val result =
             transactionTemplate.execute {
                 val reservation =
                     reservationRepository.findByPlatformIdAndPlatformReservationRef(
@@ -165,8 +166,9 @@ class ReservationService(
                             confirmCancellation(requestKey, reservation)
                     }
                 }
-            },
-        ) { "CANCEL_CONFIRM 트랜잭션은 항상 값을 반환해야 합니다" }
+            }
+        return checkNotNull(result) { "CANCEL_CONFIRM 트랜잭션은 항상 값을 반환해야 합니다" }
+    }
 
     private fun confirmCancellation(
         requestKey: String,
@@ -219,8 +221,8 @@ class ReservationService(
     private fun attemptCancelRequest(
         command: CancelRequestCommand,
         requestKey: String,
-    ): ReservationLog =
-        checkNotNull(
+    ): ReservationLog {
+        val result =
             transactionTemplate.execute {
                 val reservation = reservationRepository.findById(command.reservationId).orElse(null)
 
@@ -259,8 +261,9 @@ class ReservationService(
                                 .toDomain()
                     }
                 }
-            },
-        ) { "CANCEL_REQUEST 트랜잭션은 항상 값을 반환해야 합니다" }
+            }
+        return checkNotNull(result) { "CANCEL_REQUEST 트랜잭션은 항상 값을 반환해야 합니다" }
+    }
 
     private fun confirmCancelRequest(
         command: CancelRequestCommand,
@@ -320,8 +323,8 @@ class ReservationService(
     private fun attemptChange(
         command: ChangeReservationCommand,
         requestKey: String,
-    ): ReservationLog =
-        checkNotNull(
+    ): ReservationLog {
+        val result =
             transactionTemplate.execute {
                 val reservation =
                     reservationRepository.findByPlatformIdAndPlatformReservationRef(
@@ -346,8 +349,9 @@ class ReservationService(
                         ReservationStatus.CONFIRMED -> confirmChange(command, requestKey, reservation)
                     }
                 }
-            },
-        ) { "CHANGE 트랜잭션은 항상 값을 반환해야 합니다" }
+            }
+        return checkNotNull(result) { "CHANGE 트랜잭션은 항상 값을 반환해야 합니다" }
+    }
 
     private fun confirmChange(
         command: ChangeReservationCommand,
@@ -386,7 +390,7 @@ class ReservationService(
         requestKey: String,
     ): ReservationLog =
         try {
-            checkNotNull(
+            val result =
                 transactionTemplate.execute {
                     val reservation =
                         checkNotNull(
@@ -420,8 +424,8 @@ class ReservationService(
                     )
 
                     rejectedRequest.toDomain()
-                },
-            ) { "거부 기록 트랜잭션은 항상 값을 반환해야 합니다" }
+                }
+            checkNotNull(result) { "거부 기록 트랜잭션은 항상 값을 반환해야 합니다" }
         } catch (_: DataIntegrityViolationException) {
             checkNotNull(reservationLogRepository.findByRequestKey(requestKey)) {
                 "uq_request_key 위반이면 동일 requestKey row가 반드시 존재해야 합니다"

@@ -10,7 +10,6 @@ import yeo.chi.proejct.pms.reservation.configuration.OutboundNotificationDispatc
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
 import yeo.chi.proejct.pms.reservation.persistent.entity.OutboundNotificationEntity
 import yeo.chi.proejct.pms.reservation.persistent.repository.OutboundNotificationRepository
-import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationRepository
 import java.time.OffsetDateTime
 
 private const val INBOUND_EVENTS_PATH = "/api/inbound-events"
@@ -18,7 +17,6 @@ private const val INBOUND_EVENTS_PATH = "/api/inbound-events"
 @Service
 class OutboundNotificationDispatchWorker(
     private val outboundNotificationRepository: OutboundNotificationRepository,
-    private val reservationRepository: ReservationRepository,
     private val transactionTemplate: TransactionTemplate,
     private val operationRestClient: RestClient,
     private val properties: OutboundNotificationDispatchProperties,
@@ -72,19 +70,17 @@ class OutboundNotificationDispatchWorker(
         outboundNotificationRepository.saveAndFlush(notification)
     }
 
-    // BOOK이 겹침으로 거부된 경우(RESERVATION_REJECTED) reservationId가 null이다 — 예약 row 자체가
-    // 없어 DB에서 reservation_no를 조회할 수 없으므로, 발행 시점에 payload 안에 담아둔 reservationNo를
-    // 그대로 읽는다(ReservationService.rejectedNotificationEntity 참고).
+    // BOOK이 겹침으로 거부된 경우(RESERVATION_REJECTED) reservationCode가 null이다 — 예약 row 자체가
+    // 없어 여기서 채울 값이 없으므로, 발행 시점에 payload 안에 담아둔 reservationNo를 그대로 읽는다
+    // (domain/OutboundNotification.kt의 rejected()/ReservationRejectedPayload.from() 참고).
     private fun resolveReservationNo(notification: OutboundNotificationEntity): String {
         val reservationCode = notification.reservationCode
-        return if (reservationCode != null) {
-            requireNotNull(reservationRepository.findByReservationCode(reservationCode)?.reservationCode) {
-                "저장된 예약은 reservation_no를 가지고 있어야 합니다"
-            }
-        } else {
+        // reservation_code는 생성 컬럼이라 값이 절대 바뀌지 않으므로, DB에서 재조회해도 항상 이
+        // reservationCode와 같은 값이 나온다 — 재조회 없이 그대로 반환한다.
+        return reservationCode ?: run {
             val payloadNode = objectMapper.readTree(notification.payload)
             requireNotNull(payloadNode.get("reservationNo")?.asText()) {
-                "reservationId가 없는 알림은 payload에 reservationNo가 있어야 합니다: " +
+                "reservationCode가 없는 알림은 payload에 reservationNo가 있어야 합니다: " +
                         "notificationKey=${notification.notificationKey}"
             }
         }

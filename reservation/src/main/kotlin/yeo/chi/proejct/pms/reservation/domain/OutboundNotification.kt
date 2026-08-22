@@ -148,7 +148,7 @@ enum class OutboundNotificationStatus {
 }
 
 data class ReservationConfirmedPayload(
-    val reservationCode: String,
+    val reservationNo: String,
     val platformId: String,
     val roomCode: String,
     val startDate: LocalDate,
@@ -156,7 +156,7 @@ data class ReservationConfirmedPayload(
 ) {
     companion object {
         fun from(reservation: Reservation) = ReservationConfirmedPayload(
-            reservationCode = reservation.reservationCode,
+            reservationNo = reservation.reservationCode,
             platformId = reservation.platformId,
             roomCode = reservation.roomId,
             startDate = reservation.dateRange.startDate,
