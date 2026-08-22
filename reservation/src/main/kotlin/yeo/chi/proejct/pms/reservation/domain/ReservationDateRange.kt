@@ -1,5 +1,6 @@
 package yeo.chi.proejct.pms.reservation.domain
 
+import io.hypersistence.utils.hibernate.type.range.Range
 import java.time.LocalDate
 
 // PostgreSQL daterange의 [startDate, endDate) 반개구간 의미론: endDate(체크아웃일)는 exclusive.
@@ -14,4 +15,6 @@ data class ReservationDateRange(
             "startDate는 endDate보다 이전이어야 합니다: startDate=$startDate, endDate=$endDate"
         }
     }
+
+    fun toRange(): Range<LocalDate> = Range.closedOpen(startDate, endDate)
 }

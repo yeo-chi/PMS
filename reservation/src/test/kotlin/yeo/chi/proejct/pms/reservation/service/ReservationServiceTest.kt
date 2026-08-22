@@ -9,8 +9,7 @@ import jakarta.persistence.EntityManager
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.support.TransactionTemplate
-import yeo.chi.proejct.pms.reservation.domain.BookReservationCommand
-import yeo.chi.proejct.pms.reservation.domain.CancelConfirmCommand
+import yeo.chi.proejct.pms.reservation.controller.data.CancelConfirmRequest
 import yeo.chi.proejct.pms.reservation.domain.CancelRequestCommand
 import yeo.chi.proejct.pms.reservation.domain.CancelRequestReason
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
@@ -49,20 +48,21 @@ class ReservationServiceTest(
         startDate: LocalDate,
         endDate: LocalDate,
         initiatedBy: RequestInitiator = RequestInitiator.OTA,
-    ): BookReservationCommand =
-        BookReservationCommand(
+    ): Reservation =
+        Reservation(
             platformId = "OTA_BOOKING",
             platformReservationRef = platformReservationRef,
             roomId = roomCode,
             dateRange = ReservationDateRange(startDate, endDate),
+            status = ReservationStatus.CONFIRMED,
             initiatedBy = initiatedBy,
         )
 
-    fun cancelConfirmCommand(
+    fun cancelConfirmRequest(
         platformReservationRef: String,
         externalRequestId: String,
-    ): CancelConfirmCommand =
-        CancelConfirmCommand(
+    ): CancelConfirmRequest =
+        CancelConfirmRequest(
             platformId = "OTA_BOOKING",
             platformReservationRef = platformReservationRef,
             externalRequestId = externalRequestId,
@@ -110,7 +110,10 @@ class ReservationServiceTest(
 
     feature("BOOK 처리 실패") {
         scenario("HOST가 시작한 BOOK 요청은 거부된다") {
-            val command =
+            // Reservation.init이 즉시 검증하므로(서비스 호출 전 생성 시점) 생성 자체를
+            // shouldThrow로 감싸야 한다 — reservationService.book(command)만 감싸면 예외가 그 이전
+            // 생성 시점에 이미 던져져 테스트 블록 밖으로 전파된다.
+            shouldThrow<IllegalArgumentException> {
                 bookCommand(
                     "REF-BOOK-HOST",
                     "ROOM-BOOK-HOST",
@@ -118,8 +121,7 @@ class ReservationServiceTest(
                     LocalDate.of(2027, 3, 5),
                     initiatedBy = RequestInitiator.HOST,
                 )
-
-            shouldThrow<IllegalArgumentException> { reservationService.book(command) }
+            }
         }
 
         scenario("startDate가 endDate보다 이전이 아닌 BOOK 요청은 거부된다") {
@@ -190,7 +192,7 @@ class ReservationServiceTest(
                 )
             val reservationCode = requireNotNull(bookResult.reservationCode)
 
-            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-1", "EXT-CANCEL-1"))
+            val result = reservationService.cancelConfirm(cancelConfirmRequest("REF-CANCEL-1", "EXT-CANCEL-1"))
 
             result.resultStatus shouldBe RequestResultStatus.SUCCESS
             result.reservationCode shouldBe reservationCode
@@ -204,7 +206,7 @@ class ReservationServiceTest(
             val now = OffsetDateTime.now()
             val pendingReservation =
                 reservationRepository.saveAndFlush(
-                    ReservationEntity.from(
+                    ReservationEntity.of(
                         Reservation(
                             reservationCode = "",
                             platformId = "OTA_BOOKING",
@@ -212,14 +214,13 @@ class ReservationServiceTest(
                             roomId = "ROOM-CANCEL-2",
                             dateRange = ReservationDateRange(LocalDate.of(2027, 6, 1), LocalDate.of(2027, 6, 5)),
                             status = ReservationStatus.PENDING_CANCEL,
-                            version = 1,
-                            createdAt = now,
-                            updatedAt = now,
+                            initiatedBy = RequestInitiator.OTA,
                         ),
+                        now,
                     ),
                 )
 
-            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-2", "EXT-CANCEL-2"))
+            val result = reservationService.cancelConfirm(cancelConfirmRequest("REF-CANCEL-2", "EXT-CANCEL-2"))
 
             result.resultStatus shouldBe RequestResultStatus.SUCCESS
             reservationRepository.findById(pendingReservation.id).orElseThrow().status shouldBe ReservationStatus.CANCELLED
@@ -232,10 +233,10 @@ class ReservationServiceTest(
                     bookCommand("REF-CANCEL-3", "ROOM-CANCEL-3", LocalDate.of(2027, 7, 1), LocalDate.of(2027, 7, 5)),
                 )
             val reservationCode = requireNotNull(bookResult.reservationCode)
-            reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-3", "EXT-CANCEL-3-FIRST"))
+            reservationService.cancelConfirm(cancelConfirmRequest("REF-CANCEL-3", "EXT-CANCEL-3-FIRST"))
             val versionAfterFirstCancel = checkNotNull(reservationRepository.findByReservationCode(reservationCode)).version
 
-            val secondResult = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-3", "EXT-CANCEL-3-SECOND"))
+            val secondResult = reservationService.cancelConfirm(cancelConfirmRequest("REF-CANCEL-3", "EXT-CANCEL-3-SECOND"))
 
             secondResult.resultStatus shouldBe RequestResultStatus.SUCCESS
             val reservationAfterSecondCancel = checkNotNull(reservationRepository.findByReservationCode(reservationCode))
@@ -252,7 +253,7 @@ class ReservationServiceTest(
         scenario("존재하지 않는 예약에 대한 취소통보는 FAILED로 기록되고 알림을 남기지 않는다") {
             val notificationCountBefore = outboundNotificationRepository.findAll().size
 
-            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-NOT-FOUND", "EXT-CANCEL-NOT-FOUND"))
+            val result = reservationService.cancelConfirm(cancelConfirmRequest("REF-CANCEL-NOT-FOUND", "EXT-CANCEL-NOT-FOUND"))
 
             result.resultStatus shouldBe RequestResultStatus.FAILED
             result.rejectReason shouldBe "RESERVATION_NOT_FOUND"
@@ -266,10 +267,10 @@ class ReservationServiceTest(
                     bookCommand("REF-CANCEL-4", "ROOM-CANCEL-4", LocalDate.of(2027, 8, 1), LocalDate.of(2027, 8, 5)),
                 )
             val reservationCode = requireNotNull(bookResult.reservationCode)
-            val command = cancelConfirmCommand("REF-CANCEL-4", "EXT-CANCEL-4")
+            val request = cancelConfirmRequest("REF-CANCEL-4", "EXT-CANCEL-4")
 
-            val firstResult = reservationService.cancelConfirm(command)
-            val secondResult = reservationService.cancelConfirm(command)
+            val firstResult = reservationService.cancelConfirm(request)
+            val secondResult = reservationService.cancelConfirm(request)
 
             secondResult.id shouldBe firstResult.id
             outboundNotificationRepository.findAll().count {
@@ -296,7 +297,7 @@ class ReservationServiceTest(
                     .executeUpdate()
             }
 
-            val result = reservationService.cancelConfirm(cancelConfirmCommand("REF-CANCEL-5", "EXT-CANCEL-5"))
+            val result = reservationService.cancelConfirm(cancelConfirmRequest("REF-CANCEL-5", "EXT-CANCEL-5"))
 
             result.resultStatus shouldBe RequestResultStatus.SUCCESS
             checkNotNull(reservationRepository.findByReservationCode(reservationCode)).status shouldBe ReservationStatus.CANCELLED
@@ -403,7 +404,7 @@ class ReservationServiceTest(
             val now = OffsetDateTime.now()
             val cancelledReservation =
                 reservationRepository.saveAndFlush(
-                    ReservationEntity.from(
+                    ReservationEntity.of(
                         Reservation(
                             reservationCode = "",
                             platformId = "OTA_BOOKING",
@@ -411,10 +412,9 @@ class ReservationServiceTest(
                             roomId = "ROOM-CANCEL-REQ-4",
                             dateRange = ReservationDateRange(LocalDate.of(2028, 4, 1), LocalDate.of(2028, 4, 5)),
                             status = ReservationStatus.CANCELLED,
-                            version = 1,
-                            createdAt = now,
-                            updatedAt = now,
+                            initiatedBy = RequestInitiator.OTA,
                         ),
+                        now,
                     ),
                 )
 

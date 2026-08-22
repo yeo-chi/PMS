@@ -43,7 +43,7 @@ class ReservationControllerTest(
                         BookReservationRequest(
                             platformId = "OTA_BOOKING",
                             platformReservationRef = platformReservationRef,
-                            roomCode = roomCode,
+                            roomId = roomCode,
                             startDate = startDate,
                             endDate = endDate,
                             initiatedBy = initiatedBy,

@@ -25,41 +25,41 @@ data class ReservationLog(
         fun booked(
             requestKey: String,
             reservation: Reservation,
-            initiatedBy: RequestInitiator,
+            offsetDateTime: OffsetDateTime,
         ) = ReservationLog(
             id = null,
             requestKey = requestKey,
             reservationCode = reservation.reservationCode,
             platformId = reservation.platformId,
             action = ReservationLogAction.BOOK,
-            initiatedBy = initiatedBy,
+            initiatedBy = reservation.initiatedBy,
             roomCode = reservation.roomId,
             oldDateRange = null,
             newDateRange = reservation.dateRange,
             resultStatus = RequestResultStatus.SUCCESS,
             rejectReason = null,
-            requestedAt = reservation.createdAt,
+            requestedAt = offsetDateTime,
         )
 
         // BOOK이 겹침(uq_request_key가 아니라 excl_room_date_overlap)으로 거부된 경우. 예약 row 자체가
         // 없어 reservationCode/roomCode는 command에서만 얻을 수 있다.
         fun bookConflict(
             requestKey: String,
-            command: BookReservationCommand,
-            now: OffsetDateTime,
+            reservation: Reservation,
+            offsetDateTime: OffsetDateTime,
         ) = ReservationLog(
             id = null,
             requestKey = requestKey,
             reservationCode = null,
-            platformId = command.platformId,
+            platformId = reservation.platformId,
             action = ReservationLogAction.BOOK,
-            initiatedBy = command.initiatedBy,
-            roomCode = command.roomId,
+            initiatedBy = reservation.initiatedBy,
+            roomCode = reservation.roomId,
             oldDateRange = null,
-            newDateRange = command.dateRange,
+            newDateRange = reservation.dateRange,
             resultStatus = RequestResultStatus.CONFLICT,
             rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
-            requestedAt = now,
+            requestedAt = offsetDateTime,
         )
 
         // CANCEL_CONFIRM은 status만 CANCELLED로 바꿀 뿐 dateRange는 건드리지 않으므로, reservation은
@@ -85,13 +85,13 @@ data class ReservationLog(
 
         fun cancelConfirmNotFound(
             requestKey: String,
-            command: CancelConfirmCommand,
+            platformId: String,
             now: OffsetDateTime = OffsetDateTime.now(),
         ) = ReservationLog(
             id = null,
             requestKey = requestKey,
             reservationCode = null,
-            platformId = command.platformId,
+            platformId = platformId,
             action = ReservationLogAction.CANCEL_CONFIRM,
             initiatedBy = RequestInitiator.OTA,
             roomCode = null,

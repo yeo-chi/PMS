@@ -45,6 +45,12 @@ CREATE TABLE reservations (
     status                      VARCHAR(20) NOT NULL
                                  CHECK (status IN ('CONFIRMED', 'PENDING_CANCEL', 'CANCELLED')),
 
+    -- 이 예약을 처음 만든 주체 (OTA/호스트/자사 서비스). HOST는 BOOK을 시작할 수 없다는 규칙은
+    -- 애플리케이션(Reservation 도메인 객체의 init)이 강제하므로, 이 컬럼에는 실질적으로 HOST가
+    -- 저장되는 일이 없다 — CHECK는 그래도 전체 enum 값을 그대로 반영해둔다.
+    initiated_by                VARCHAR(20) NOT NULL
+                                 CHECK (initiated_by IN ('OTA', 'HOST', 'SELF_SERVICE')),
+
     -- 낙관적 락 (동일 예약 건에 대한 동시 변경/취소 요청 충돌 방지)
     version                     INT NOT NULL DEFAULT 1,
 

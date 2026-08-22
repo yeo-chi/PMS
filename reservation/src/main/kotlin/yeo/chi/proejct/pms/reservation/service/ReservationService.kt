@@ -6,11 +6,11 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import yeo.chi.proejct.pms.reservation.controller.data.CancelConfirmRequest
 import yeo.chi.proejct.pms.reservation.domain.*
 import yeo.chi.proejct.pms.reservation.persistent.entity.OutboundNotificationEntity
 import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationEntity
 import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationLogEntity
-import yeo.chi.proejct.pms.reservation.persistent.entity.toRange
 import yeo.chi.proejct.pms.reservation.persistent.repository.OutboundNotificationRepository
 import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationLogRepository
 import yeo.chi.proejct.pms.reservation.persistent.repository.ReservationRepository
@@ -24,27 +24,23 @@ class ReservationService(
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
 ) {
-    fun book(command: BookReservationCommand): ReservationLog {
-        require(command.initiatedBy != RequestInitiator.HOST) {
-            "HOST는 예약 요청(BOOK)을 시작할 수 없습니다: initiatedBy=${command.initiatedBy}"
-        }
-
-        command.buildBookRequestKey().let {
+    fun book(reservation: Reservation): ReservationLog {
+        reservation.logKey().let {
             reservationLogRepository.findByRequestKey(it)
                 ?.let { existingRequest ->
                     return existingRequest.toDomain()
                 }
 
             return try {
-                attemptBook(command, it)
+                attemptBook(reservation, it)
             } catch (_: DataIntegrityViolationException) {
-                recordConflict(command, it)
+                recordConflict(reservation, it)
             }
         }
     }
 
     private fun attemptBook(
-        command: BookReservationCommand,
+        reservation: Reservation,
         requestKey: String,
     ): ReservationLog =
         checkNotNull(
@@ -52,16 +48,18 @@ class ReservationService(
                 // reservationCode는 DB가 생성하는 컬럼이라(ReservationEntity의 @Generated), 저장 전
                 // 도메인 객체의 reservationCode는 실제 값이 아닌 placeholder다. reservation_requests/
                 // outbound_notifications가 이 값을 FK로 참조하므로, 저장 후 재조회한 실제 값을 써야 한다.
+                val now = OffsetDateTime.now()
+
                 val reservation =
-                    reservationRepository.saveAndFlush(ReservationEntity.from(Reservation.of(command))).toDomain()
+                    reservationRepository.saveAndFlush(ReservationEntity.of(reservation, now)).toDomain()
 
                 val savedRequest =
                     reservationLogRepository.saveAndFlush(
-                        ReservationLogEntity.from(ReservationLog.booked(requestKey, reservation, command.initiatedBy)),
+                        ReservationLogEntity.from(ReservationLog.booked(requestKey, reservation, now)),
                     )
 
                 outboundNotificationRepository.saveAndFlush(
-                    OutboundNotificationEntity.confirmed(requestKey, reservation, objectMapper),
+                    OutboundNotificationEntity.confirmed(requestKey, reservation, now, objectMapper),
                 )
 
                 savedRequest.toDomain()
@@ -69,7 +67,7 @@ class ReservationService(
         ) { "예약 확정 트랜잭션은 항상 값을 반환해야 합니다" }
 
     private fun recordConflict(
-        command: BookReservationCommand,
+        reservation: Reservation,
         requestKey: String,
     ): ReservationLog {
         // uq_request_key 위반으로 여기서 예외가 나면 트랜잭션(과 그 Hibernate 세션)은 이미 롤백된 상태다.
@@ -81,45 +79,45 @@ class ReservationService(
                     val now = OffsetDateTime.now()
                     val savedRequest =
                         reservationLogRepository.saveAndFlush(
-                            ReservationLogEntity.from(ReservationLog.bookConflict(requestKey, command, now)),
+                            ReservationLogEntity.from(ReservationLog.bookConflict(requestKey, reservation, now)),
                         )
 
                     // 패자 채널에도 거부 통보를 남긴다(기획문서 4.1). 예약 row가 없어 reservation_code는
                     // null — reservationNo는 payload 안에 담아 발신 시 대체한다.
                     outboundNotificationRepository.saveAndFlush(
-                        OutboundNotificationEntity.rejected(requestKey, command, now, objectMapper),
+                        OutboundNotificationEntity.rejected(requestKey, reservation, now, objectMapper),
                     )
 
                     savedRequest.toDomain()
                 },
             ) { "충돌 기록 트랜잭션은 항상 값을 반환해야 합니다" }
-        } catch (duplicateRequestKey: DataIntegrityViolationException) {
+        } catch (_: DataIntegrityViolationException) {
             checkNotNull(reservationLogRepository.findByRequestKey(requestKey)) {
                 "uq_request_key 위반이면 동일 requestKey row가 반드시 존재해야 합니다"
             }.toDomain()
         }
     }
 
-    fun cancelConfirm(command: CancelConfirmCommand): ReservationLog {
-        val requestKey = command.buildCancelConfirmRequestKey(OffsetDateTime.now())
+    fun cancelConfirm(request: CancelConfirmRequest): ReservationLog {
+        val requestKey = request.buildCancelConfirmRequestKey(OffsetDateTime.now())
 
         reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
             return existingRequest.toDomain()
         }
 
-        return cancelConfirmWithRetry(command, requestKey)
+        return cancelConfirmWithRetry(request, requestKey)
     }
 
     // 낙관적 락 충돌(ObjectOptimisticLockingFailureException)은 attemptCancelConfirm의 트랜잭션 "밖"에서 잡는다.
     // BOOK의 recordConflict와 같은 이유로, 실패한 트랜잭션의 Hibernate 세션을 재사용하면 예외 이후 flush 문제가 생긴다.
     private fun cancelConfirmWithRetry(
-        command: CancelConfirmCommand,
+        request: CancelConfirmRequest,
         requestKey: String,
     ): ReservationLog {
         var attempt = 1
         while (true) {
             try {
-                return attemptCancelConfirm(command, requestKey)
+                return attemptCancelConfirm(request, requestKey)
             } catch (staleVersion: ObjectOptimisticLockingFailureException) {
                 if (attempt >= CANCEL_CONFIRM_MAX_ATTEMPTS) throw staleVersion
                 attempt++
@@ -128,15 +126,15 @@ class ReservationService(
     }
 
     private fun attemptCancelConfirm(
-        command: CancelConfirmCommand,
+        request: CancelConfirmRequest,
         requestKey: String,
     ): ReservationLog =
         checkNotNull(
             transactionTemplate.execute {
                 val reservation =
                     reservationRepository.findByPlatformIdAndPlatformReservationRef(
-                        command.platformId,
-                        command.platformReservationRef,
+                        request.platformId,
+                        request.platformReservationRef,
                     )
 
                 if (reservation == null) {
@@ -145,7 +143,7 @@ class ReservationService(
                             ReservationLogEntity.from(
                                 ReservationLog.cancelConfirmNotFound(
                                     requestKey,
-                                    command
+                                    request.platformId,
                                 )
                             )
                         )
@@ -289,10 +287,8 @@ class ReservationService(
     }
 
     fun change(command: ChangeReservationCommand): ReservationLog {
-        require(command.initiatedBy != RequestInitiator.HOST) {
-            "HOST는 예약 변경(CHANGE)을 요청할 수 없습니다: initiatedBy=${command.initiatedBy}"
-        }
-
+        // HOST는 CHANGE를 시작할 수 없다는 규칙은 ChangeReservationCommand.init에서 이미 강제된다
+        // (Reservation.init의 BOOK 검증과 동일 패턴) — 여기서 다시 검증할 필요가 없다.
         val requestKey = command.buildChangeRequestKey(OffsetDateTime.now())
 
         reservationLogRepository.findByRequestKey(requestKey)?.let { existingRequest ->
@@ -371,7 +367,13 @@ class ReservationService(
             )
 
         outboundNotificationRepository.saveAndFlush(
-            OutboundNotificationEntity.changed(requestKey, originalReservation, command.newDateRange, now, objectMapper),
+            OutboundNotificationEntity.changed(
+                requestKey,
+                originalReservation,
+                command.newDateRange,
+                now,
+                objectMapper
+            ),
         )
 
         return savedRequest.toDomain()

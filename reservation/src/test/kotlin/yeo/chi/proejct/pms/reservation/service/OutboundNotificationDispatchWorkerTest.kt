@@ -21,7 +21,6 @@ import org.springframework.test.web.client.response.MockRestResponseCreators.wit
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.client.RestClient
 import yeo.chi.proejct.pms.reservation.configuration.OutboundNotificationDispatchProperties
-import yeo.chi.proejct.pms.reservation.domain.BookReservationCommand
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotification
 import yeo.chi.proejct.pms.reservation.domain.OutboundNotificationStatus
 import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
@@ -30,6 +29,7 @@ import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import yeo.chi.proejct.pms.reservation.domain.ReservationLog
 import yeo.chi.proejct.pms.reservation.domain.ReservationLogAction
+import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
 import yeo.chi.proejct.pms.reservation.persistent.PostgresIntegrationTest
 import yeo.chi.proejct.pms.reservation.persistent.entity.OutboundNotificationEntity
 import yeo.chi.proejct.pms.reservation.persistent.entity.ReservationEntity
@@ -64,16 +64,17 @@ class OutboundNotificationDispatchWorkerTest(
     }
 
     fun savedReservationCode(platformReservationRef: String, roomId: String): String {
-        val command =
-            BookReservationCommand(
+        val reservation =
+            Reservation(
                 platformId = "OTA_BOOKING",
                 platformReservationRef = platformReservationRef,
                 roomId = roomId,
                 dateRange = ReservationDateRange(LocalDate.of(2030, 1, 1), LocalDate.of(2030, 1, 5)),
+                status = ReservationStatus.CONFIRMED,
                 initiatedBy = RequestInitiator.OTA,
             )
         return reservationRepository
-            .saveAndFlush(ReservationEntity.from(Reservation.of(command)))
+            .saveAndFlush(ReservationEntity.of(reservation, OffsetDateTime.now()))
             .reservationCode
     }
 

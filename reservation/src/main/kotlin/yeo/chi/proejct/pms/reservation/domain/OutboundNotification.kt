@@ -26,6 +26,7 @@ data class OutboundNotification(
         fun from(
             requestKey: String,
             reservation: Reservation,
+            now: OffsetDateTime,
             objectMapper: ObjectMapper,
         ) = OutboundNotification(
             notificationKey = "${reservation.reservationCode}:$RESERVATION_CONFIRMED_EVENT_TYPE",
@@ -35,7 +36,7 @@ data class OutboundNotification(
             payload = objectMapper.writeValueAsString(ReservationConfirmedPayload.from(reservation)),
             status = OutboundNotificationStatus.PENDING,
             retryCount = 0,
-            nextRetryAt = reservation.createdAt,
+            nextRetryAt = now,
         )
 
         // CANCEL_CONFIRM 성공 시 취소통보. CANCEL_CONFIRM은 status만 CANCELLED로 바꿀 뿐 dateRange는
@@ -81,11 +82,11 @@ data class OutboundNotification(
         // 전제에 기대지 않고 CHANGE와 동일하게 안전한 패턴을 그대로 따른다.
         fun rejected(
             requestKey: String,
-            command: BookReservationCommand,
+            reservation: Reservation,
             now: OffsetDateTime,
             objectMapper: ObjectMapper,
         ): OutboundNotification {
-            val payload = ReservationRejectedPayload.from(command)
+            val payload = ReservationRejectedPayload.from(reservation)
             return OutboundNotification(
                 notificationKey = "${payload.reservationNo}:$RESERVATION_REJECTED_EVENT_TYPE:$requestKey",
                 reservationCode = null,
@@ -244,12 +245,12 @@ data class ReservationRejectedPayload(
     companion object {
         private const val DUPLICATE_BOOKING_REJECT_REASON = "DUPLICATE_BOOKING"
 
-        fun from(command: BookReservationCommand) = ReservationRejectedPayload(
-            reservationNo = "${command.platformId}:${command.platformReservationRef}",
-            platformId = command.platformId,
-            roomCode = command.roomId,
-            startDate = command.dateRange.startDate,
-            endDate = command.dateRange.endDate,
+        fun from(reservation: Reservation) = ReservationRejectedPayload(
+            reservationNo = "${reservation.platformId}:${reservation.platformReservationRef}",
+            platformId = reservation.platformId,
+            roomCode = reservation.roomId,
+            startDate = reservation.dateRange.startDate,
+            endDate = reservation.dateRange.endDate,
             rejectReason = DUPLICATE_BOOKING_REJECT_REASON,
         )
     }

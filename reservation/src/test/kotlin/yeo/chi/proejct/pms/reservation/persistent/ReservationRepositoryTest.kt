@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.orm.ObjectOptimisticLockingFailureException
+import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
@@ -30,7 +31,7 @@ class ReservationRepositoryTest(
         status: ReservationStatus = ReservationStatus.CONFIRMED,
     ): ReservationEntity {
         val now = OffsetDateTime.now()
-        return ReservationEntity.from(
+        return ReservationEntity.of(
             Reservation(
                 reservationCode = "",
                 platformId = "OTA_BOOKING",
@@ -38,10 +39,9 @@ class ReservationRepositoryTest(
                 roomId = roomCode,
                 dateRange = ReservationDateRange(startDate, endDate),
                 status = status,
-                version = 1,
-                createdAt = now,
-                updatedAt = now,
+                initiatedBy = RequestInitiator.OTA,
             ),
+            now,
         )
     }
 

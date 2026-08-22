@@ -4,4 +4,7 @@ enum class RequestInitiator {
     OTA,
     HOST,
     SELF_SERVICE,
+    ;
+
+    fun isNotHost() = this != HOST
 }

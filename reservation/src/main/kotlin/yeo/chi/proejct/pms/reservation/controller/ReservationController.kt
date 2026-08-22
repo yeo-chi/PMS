@@ -21,7 +21,7 @@ class ReservationController(
     fun book(
         @Valid @RequestBody request: BookReservationRequest,
     ): ResponseEntity<ReservationRequestResponse> {
-        val result = reservationService.book(request.toCommand())
+        val result = reservationService.book(request.toDomain())
         // BOOK(SUCCESS)만 신규 자원을 만드는 유일한 액션이라 201로 별도 처리한다. 예약 조회 GET
         // 엔드포인트가 없어 가리킬 대상이 없으므로 Location 헤더는 붙이지 않는다.
         val status =
@@ -45,7 +45,7 @@ class ReservationController(
     fun cancelConfirm(
         @Valid @RequestBody request: CancelConfirmRequest,
     ): ResponseEntity<ReservationRequestResponse> {
-        val result = reservationService.cancelConfirm(request.toCommand())
+        val result = reservationService.cancelConfirm(request)
         return ResponseEntity.status(result.toHttpStatus()).body(result.toResponse())
     }
 

@@ -35,7 +35,7 @@ class OutboundNotificationRepositoryTest(
     fun savedReservationCode(): String {
         val now = OffsetDateTime.now()
         val entity =
-            ReservationEntity.from(
+            ReservationEntity.of(
                 Reservation(
                     reservationCode = "",
                     platformId = "OTA_BOOKING",
@@ -43,10 +43,9 @@ class OutboundNotificationRepositoryTest(
                     roomId = "ROOM-501",
                     dateRange = ReservationDateRange(startDate = LocalDate.of(2026, 10, 1), endDate = LocalDate.of(2026, 10, 5)),
                     status = ReservationStatus.CONFIRMED,
-                    version = 1,
-                    createdAt = now,
-                    updatedAt = now,
+                    initiatedBy = RequestInitiator.OTA,
                 ),
+                now,
             )
         return reservationRepository.saveAndFlush(entity).reservationCode
     }

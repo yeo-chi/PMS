@@ -8,7 +8,6 @@ import jakarta.persistence.EntityManager
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.transaction.support.TransactionTemplate
-import yeo.chi.proejct.pms.reservation.domain.BookReservationCommand
 import yeo.chi.proejct.pms.reservation.domain.ChangeReservationCommand
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
@@ -38,12 +37,13 @@ class ReservationChangeServiceTest(
         roomCode: String,
         startDate: LocalDate,
         endDate: LocalDate,
-    ): BookReservationCommand =
-        BookReservationCommand(
+    ): Reservation =
+        Reservation(
             platformId = "OTA_BOOKING",
             platformReservationRef = platformReservationRef,
             roomId = roomCode,
             dateRange = ReservationDateRange(startDate, endDate),
+            status = ReservationStatus.CONFIRMED,
             initiatedBy = RequestInitiator.OTA,
         )
 
@@ -207,7 +207,7 @@ class ReservationChangeServiceTest(
             val now = OffsetDateTime.now()
             val pendingReservation =
                 reservationRepository.saveAndFlush(
-                    ReservationEntity.from(
+                    ReservationEntity.of(
                         Reservation(
                             reservationCode = "",
                             platformId = "OTA_BOOKING",
@@ -215,10 +215,9 @@ class ReservationChangeServiceTest(
                             roomId = "ROOM-CHANGE-7",
                             dateRange = ReservationDateRange(LocalDate.of(2029, 3, 1), LocalDate.of(2029, 3, 5)),
                             status = ReservationStatus.PENDING_CANCEL,
-                            version = 1,
-                            createdAt = now,
-                            updatedAt = now,
+                            initiatedBy = RequestInitiator.OTA,
                         ),
+                        now,
                     ),
                 )
 
@@ -236,7 +235,7 @@ class ReservationChangeServiceTest(
             val now = OffsetDateTime.now()
             val cancelledReservation =
                 reservationRepository.saveAndFlush(
-                    ReservationEntity.from(
+                    ReservationEntity.of(
                         Reservation(
                             reservationCode = "",
                             platformId = "OTA_BOOKING",
@@ -244,10 +243,9 @@ class ReservationChangeServiceTest(
                             roomId = "ROOM-CHANGE-8",
                             dateRange = ReservationDateRange(LocalDate.of(2029, 5, 1), LocalDate.of(2029, 5, 5)),
                             status = ReservationStatus.CANCELLED,
-                            version = 1,
-                            createdAt = now,
-                            updatedAt = now,
+                            initiatedBy = RequestInitiator.OTA,
                         ),
+                        now,
                     ),
                 )
 
@@ -276,15 +274,16 @@ class ReservationChangeServiceTest(
         }
 
         scenario("HOST가 시작한 CHANGE 요청은 거부된다") {
-            val command =
+            // ChangeReservationCommand.init이 즉시 검증하므로(서비스 호출 전 생성 시점) 생성 자체를
+            // shouldThrow로 감싸야 한다 — BOOK의 동일 시나리오와 같은 이유.
+            shouldThrow<IllegalArgumentException> {
                 changeCommand(
                     "REF-CHANGE-HOST",
                     LocalDate.of(2029, 8, 1),
                     LocalDate.of(2029, 8, 5),
                     initiatedBy = RequestInitiator.HOST,
                 )
-
-            shouldThrow<IllegalArgumentException> { reservationService.change(command) }
+            }
         }
 
         scenario("startDate가 endDate보다 이전이 아닌 CHANGE 요청은 거부된다") {

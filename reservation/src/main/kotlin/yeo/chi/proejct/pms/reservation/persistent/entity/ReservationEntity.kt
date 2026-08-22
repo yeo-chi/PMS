@@ -6,6 +6,7 @@ import jakarta.persistence.*
 import org.hibernate.annotations.Generated
 import org.hibernate.annotations.Type
 import org.hibernate.generator.EventType
+import yeo.chi.proejct.pms.reservation.domain.RequestInitiator
 import yeo.chi.proejct.pms.reservation.domain.Reservation
 import yeo.chi.proejct.pms.reservation.domain.ReservationDateRange
 import yeo.chi.proejct.pms.reservation.domain.ReservationStatus
@@ -36,13 +37,16 @@ class ReservationEntity(
     @Version
     @Column(name = "version")
     val version: Int,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "initiated_by")
+    val initiatedBy: RequestInitiator,
     @Column(name = "created_at")
     val createdAt: OffsetDateTime,
     @Column(name = "updated_at")
     val updatedAt: OffsetDateTime,
 ) {
     companion object {
-        fun from(reservation: Reservation) =
+        fun of(reservation: Reservation, offsetDateTime: OffsetDateTime) =
             ReservationEntity(
                 reservationCode = reservation.reservationCode,
                 platformId = reservation.platformId,
@@ -50,9 +54,10 @@ class ReservationEntity(
                 roomCode = reservation.roomId,
                 dateRange = reservation.dateRange.toRange(),
                 status = reservation.status,
-                version = reservation.version,
-                createdAt = reservation.createdAt,
-                updatedAt = reservation.updatedAt,
+                version = 1,
+                initiatedBy = reservation.initiatedBy,
+                createdAt = offsetDateTime,
+                updatedAt = offsetDateTime,
             )
     }
 
@@ -64,9 +69,7 @@ class ReservationEntity(
             roomId = roomCode,
             dateRange = dateRange.toReservationDateRange(),
             status = status,
-            version = version,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
+            initiatedBy = initiatedBy,
         )
 }
 
@@ -76,4 +79,3 @@ fun Range<LocalDate>.toReservationDateRange(): ReservationDateRange {
     return ReservationDateRange(startDate = startDate, endDate = endDate)
 }
 
-fun ReservationDateRange.toRange(): Range<LocalDate> = Range.closedOpen(startDate, endDate)
